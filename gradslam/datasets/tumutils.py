@@ -47,6 +47,7 @@ from typing import Optional
 
 import numpy as np
 import warnings
+import sys
 
 __all__ = ["read_trajectory", "read_file_list", "associate"]
 
