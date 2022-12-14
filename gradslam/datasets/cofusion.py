@@ -206,7 +206,7 @@ class Cofusion(data.Dataset):
                 # Read rgb image file paths (PNG)
                 traj_colorfiles.append(os.path.normpath(os.path.join(parentdir, "colour/Color{0:04d}.png".format(int(line[0])))))
                 # Read depth image file paths (EXR)
-                traj_depthfiles.append(os.path.normpath(os.path.join(parentdir, "depth_original/Depth{0:04d}.exr".format(int(line[0])))))
+                traj_depthfiles.append(os.path.normpath(os.path.join(parentdir, "depth_noise/Depth{0:04d}.exr".format(int(line[0])))))
 
                 if self.load_poses:
                     traj_poses.append(np.asarray(line[1:]))
@@ -289,7 +289,9 @@ class Cofusion(data.Dataset):
             color_seq.append(color)
 
             if self.return_depth:
-                depth = np.asarray(imageio.imread(depth_seq_path[i]), dtype=float)[:, :, 0]
+                depth = np.asarray(imageio.imread(depth_seq_path[i]), dtype=float)
+                if len(depth.shape) > 2:
+                    depth = depth[:, :, 0]
                 depth = self._preprocess_depth(depth)
                 depth = torch.from_numpy(depth)
                 depth_seq.append(depth)
@@ -366,7 +368,7 @@ class Cofusion(data.Dataset):
         depth = cv2.resize(
             depth.astype(float),
             (self.width, self.height),
-            interpolation=cv2.INTER_LINEAR
+            interpolation=cv2.INTER_NEAREST
         )
         depth = np.expand_dims(depth, -1)
         if self.channels_first:
