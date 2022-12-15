@@ -176,8 +176,9 @@ class Cofusion(data.Dataset):
 
         # Get a list of all color, depth, pose, label and intrinsics files.
         colorfiles, depthfiles, poses, framenames = [], [], [], []
+        maskfiles, intrinsicfiles = [], []
         idx = np.arange(seqlen) * (dilation + 1)
-        for file_num, posefile in enumerate(posesfiles):
+        for file_num, posefile in enumerate(posesfiles): # Iterate over all sequences
             parentdir = os.path.dirname(posefile)[:-12]
             splitpath = posefile.split(os.sep)
             trajectory_name = splitpath[-3]
@@ -186,6 +187,7 @@ class Cofusion(data.Dataset):
                     continue
 
             traj_colorfiles, traj_depthfiles = [], []
+            traj_maskfiles, traj_intrinsicfile = [], []
             traj_poses, traj_framenames = [], []
             with open(posefile, "r") as f:
                 lines = f.readlines()
@@ -199,7 +201,7 @@ class Cofusion(data.Dataset):
                     len_posesfile = sum(1 for line in f)
 
 
-            for line_num, line in enumerate(lines):
+            for line_num, line in enumerate(lines): # Iterate files with current sequence
                 line = line.strip().split()
                 # TODO: check if reading form files is correct
                 msg = "Incorrect reading from Cofusion associations"
@@ -207,6 +209,8 @@ class Cofusion(data.Dataset):
                 traj_colorfiles.append(os.path.normpath(os.path.join(parentdir, "colour/Color{0:04d}.png".format(int(line[0])))))
                 # Read depth image file paths (EXR)
                 traj_depthfiles.append(os.path.normpath(os.path.join(parentdir, "depth_noise/Depth{0:04d}.exr".format(int(line[0])))))
+                # Read mask image file paths (PNG)
+                traj_maskfiles.append(os.path.normpath(os.path.join(parentdir, "mask_color/Mask{0:04d}.png".format(int(line[0])))))
 
                 if self.load_poses:
                     traj_poses.append(np.asarray(line[1:]))
@@ -221,28 +225,35 @@ class Cofusion(data.Dataset):
                 inds = start_ind + idx
                 colorfiles.append([traj_colorfiles[i] for i in inds])
                 depthfiles.append([traj_depthfiles[i] for i in inds])
+                maskfiles.append([traj_maskfiles[i] for i in inds])
                 framenames.append(", ".join([traj_framenames[i] for i in inds]))
                 if self.load_poses:
                     poses.append([traj_poses[i] for i in inds])
+            
+            traj_intrinsicfile = os.path.normpath(os.path.join(parentdir, "calibration.txt"))
+
+            intrinsicfiles.append(traj_intrinsicfile)
         
         self.num_sequences = len(colorfiles)
 
         # Class members to store the list of valid filepaths
         self.colorfiles = colorfiles
         self.depthfiles = depthfiles
+        self.maskfiles = maskfiles
         self.poses = poses
         self.framenames = framenames
 
         # Camera intrinisics matrix for ICL dataset
         # TODO: read intrinsics from calibration files
-        if trajectory_name == 'room4-full':
-            intrinsics = torch.tensor(
-                [[360, 0, 320, 0], [0, 360, 240, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
-            ).float()
-        elif trajectory_name == 'car4-full':
-            intrinsics = torch.tensor(
-                [[564.3, 0, 480, 0], [0, 564.3, 270, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
-            ).float()
+        # if trajectory_name == 'room4-full':
+        #     intrinsics = torch.tensor(
+        #         [[360, 0, 320, 0], [0, 360, 240, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
+        #     ).float()
+        # elif trajectory_name == 'car4-full':
+        #     intrinsics = torch.tensor(
+        #         [[564.3, 0, 480, 0], [0, 564.3, 270, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
+        #     ).float()
+        intrinsics = self._read_calibration(intrinsicfiles[0])
         
         self.intrinsics = datautils.scale_intrinsics(
             intrinsics, self.height_downsample_ratio, self.width_downsample_ratio
@@ -374,6 +385,29 @@ class Cofusion(data.Dataset):
         if self.channels_first:
             depth = datautils.channels_first(depth)
         return depth / self.scaling_factor
+
+    def _read_calibration(self, intrinsicfile: str):
+        r"""Read camera intrinsic parameters from calibration.txt.
+
+        Args:
+            intrinsicfile (str): path to calibration.txt
+        
+        Returns:
+            Output (torch.Tensor): K matrix
+
+        Shape:
+            - Output: math:`(4, 4)` 
+        """
+        with open(intrinsicfile, "r") as f:
+            line = f.readline()
+            line = line.strip().split()
+
+        return torch.tensor(
+                [[float(line[0]), 0, float(line[2]), 0], 
+                 [0, float(line[1]), float(line[3]), 0], 
+                 [0, 0, 1, 0], 
+                 [0, 0, 0, 1]]
+            ).float()
 
     def _preprocess_poses(self, poses: torch.Tensor):
         r"""Preprocesses the poses by setting first pose in a sequence to identity and computing the relative
