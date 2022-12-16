@@ -130,10 +130,10 @@ class Cofusion(data.Dataset):
         # Check if CoFusion folder structure correct: If sequences is not None, should contain all sequence paths.
         # Should also contain at least one sequence path
         sequence_paths = []
-        dirmsg = "ICL folder should look something like:\n\n| ├── basedir\n"
+        dirmsg = "Cofusion folder should look something like:\n\n| ├── basedir\n"
         dirmsg += "| │   ├── X-full\n| │   │   ├── colour/\n"
         dirmsg += "| │   │   ├── depth_noise/\n| │   │   ├── depth_original/\n"
-        dirmsg += "| │   │   ├── mask_color/\n| │   │   ├── mask_id/\n"
+        dirmsg += "| │   │   ├── mask_colour/\n| │   │   ├── mask_id/\n"
         dirmsg += "| │   │   ├── trajectories/\n"
         dirmsg += "| │   │   ├── calibration.txt\n"
         dirmsg += "| │   │   └── color-X.mp4"
@@ -210,7 +210,7 @@ class Cofusion(data.Dataset):
                 # Read depth image file paths (EXR)
                 traj_depthfiles.append(os.path.normpath(os.path.join(parentdir, "depth_noise/Depth{0:04d}.exr".format(int(line[0])))))
                 # Read mask image file paths (PNG)
-                traj_maskfiles.append(os.path.normpath(os.path.join(parentdir, "mask_color/Mask{0:04d}.png".format(int(line[0])))))
+                traj_maskfiles.append(os.path.normpath(os.path.join(parentdir, "mask_colour/Mask{0:04d}.png".format(int(line[0])))))
 
                 if self.load_poses:
                     traj_poses.append(np.asarray(line[1:]))
@@ -286,15 +286,18 @@ class Cofusion(data.Dataset):
             - intrinsics: :math:`(1, 4, 4)`
         """
 
-        # Read in the color, depth, pose, label and intrinsics info.
+        # Read in the color, depth, mask, pose, label and intrinsics info.
         color_seq_path = self.colorfiles[idx]
         depth_seq_path = self.depthfiles[idx]
+        mask_seq_path = self.maskfiles[idx]
         pose_pointquat_seq = self.poses[idx] if self.load_poses else None
         framename = self.framenames[idx]
 
-        color_seq, depth_seq, pose_seq, label_seq = [], [], [], []
+        color_seq, depth_seq, mask_seq, pose_seq, label_seq = [], [], [], [], []
         for i in range(self.seqlen):
             color = np.asarray(imageio.imread(color_seq_path[i]), dtype=float)
+            mask = np.asarray(imageio.imread(mask_seq_path[i]), dtype=np.int8)
+            color = self._filter_moving_objects(color, mask)
             color = self._preprocess_color(color)
             color = torch.from_numpy(color)
             color_seq.append(color)
@@ -303,9 +306,12 @@ class Cofusion(data.Dataset):
                 depth = np.asarray(imageio.imread(depth_seq_path[i]), dtype=float)
                 if len(depth.shape) > 2:
                     depth = depth[:, :, 0]
+                depth = self._filter_moving_objects(depth, mask)
                 depth = self._preprocess_depth(depth)
                 depth = torch.from_numpy(depth)
                 depth_seq.append(depth)
+            
+            # TODO: return mask
 
         if self.load_poses:
             poses = self._homogenPoses(pose_pointquat_seq)
@@ -361,6 +367,23 @@ class Cofusion(data.Dataset):
         if self.channels_first:
             color = datautils.channels_first(color)
         return color
+
+    def _filter_moving_objects(self, image: np.ndarray, mask: np.ndarray):
+        r"""Filter moving objects from RGB image with mask.
+
+        Args:
+            image (np.ndarray): Raw RGB image or Raw depth image
+            mask (np.ndarray): Mask for moving objects #TODO: generate mask for dynamic objects
+        
+        Returns:
+            static_image (np.ndarray): RGB image with moving objects in black
+        """
+        mask_filter = np.sum(mask, axis=2) != 0
+        if len(image.shape) == 3:
+            image[mask_filter, :] = [0, 0, 0]
+        else:
+            image[mask_filter] = 0
+        return image
 
     def _preprocess_depth(self, depth: np.ndarray):
         r"""Preprocesses the depth image by resizing, adding channel dimension, and scaling values to meters. Optionally
