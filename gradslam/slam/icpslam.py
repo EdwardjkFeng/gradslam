@@ -241,6 +241,8 @@ class ICPSLAM(nn.Module):
             pc2im_bnhw = find_active_map_points(pointclouds, prev_frame)
             maps_pc = downsample_pointclouds(pointclouds, pc2im_bnhw, self.dsratio)
             transform = self.odomprov.provide(maps_pc, frames_pc)
+            # empty cuda cache
+            torch.cuda.empty_cache()
 
             return compose_transformations(
                 transform.squeeze(1), prev_frame.poses.squeeze(1)
