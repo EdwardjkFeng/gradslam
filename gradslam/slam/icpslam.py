@@ -89,6 +89,10 @@ class ICPSLAM(nn.Module):
             odomprov = GradICPOdometryProvider(
                 numiters, damp, dist_thresh, lambda_max, B, B2, nu
             )
+        elif odom == 'color_icp':
+            odomprov = ColorICPOdometryProvider(
+                numiters, damp, dist_thresh, lambda_max, B, B2, nu
+            )
 
         self.odom = odom
         self.odomprov = odomprov

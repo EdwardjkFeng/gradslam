@@ -246,7 +246,7 @@ def point_to_plane_ICP(
 
     Args:
         src_pc (torch.Tensor): Source pointcloud (the pointcloud that needs warping).
-        tgt_pc (torch.Tensor): Target pointcloud (the pointcloud to which the source pointcloud must be warped to).
+        tgt_pc (torch.Tensor): Target pointcloud (the pperointcloud to which the source pointcloud must be warped to).
         tgt_normals (torch.Tensor): Per-point normal vectors for each point in the target pointcloud.
         initial_transform (torch.Tensor or None): The initial estimate of the transformation between 'src_pc'
             and 'tgt_pc'. If None, will use the identity matrix as the initial transform. Default: None
