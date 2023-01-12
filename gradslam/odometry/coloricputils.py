@@ -17,6 +17,77 @@ __all__ = {
 }
 
 
+# def solve_linear_system(
+#     A: torch.Tensor, b: torch.Tensor, damp: Union[float, torch.Tensor] = 1e-8
+# ):
+#     r"""Solves the normal equations of a linear system Ax = b, given the constraint matrix A and the coefficient vector
+#     b. Note that this solves the normal equations, not the linear system. That is, solves :math:`A^T A x = A^T b`,
+#     not :math:`Ax = b`.
+
+#     Args:
+#         A (torch.Tensor): The constraint matrix of the linear system.
+#         b (torch.Tensor): The coefficient vector of the linear system.
+#         damp (float or torch.Tensor): Damping coefficient to optionally condition the linear system (in practice,
+#             a damping coefficient of :math:`\rho` means that we are solving a modified linear system that adds a tiny
+#             :math:`\rho` to each diagonal element of the constraint matrix :math:`A`, so that the linear system
+#             becomes :math:`(A^TA + \rho I)x = b`, where :math:`I` is the identity matrix of shape
+#             :math:`(\text{num_of_variables}, \text{num_of_variables})`. Default: 1e-8
+
+#     Returns:
+#         torch.Tensor: Solution vector of the normal equations of the linear system
+
+#     Shape:
+#         - A: :math:`(\text{num_of_equations}, \text{num_of_variables})`
+#         - b: :math:`(\text{num_of_equations}, 1)`
+#         - Output: :math:`(\text{num_of_variables}, 1)`
+#     """
+#     if not torch.is_tensor(A):
+#         raise TypeError(
+#             "Expected A to be of type torch.Tensor. Got {0}.".format(type(A))
+#         )
+#     if not torch.is_tensor(b):
+#         raise TypeError(
+#             "Expected b to be of type torch.Tensor. Got {0}.".format(type(b))
+#         )
+#     if not (isinstance(damp, float) or torch.is_tensor(damp)):
+#         raise TypeError(
+#             "Expected damp to be of type float or torch.Tensor. Got {0}.".format(
+#                 type(damp)
+#             )
+#         )
+#     if torch.is_tensor(damp) and damp.ndim != 0:
+#         raise ValueError(
+#             "Expected torch.Tensor damp to have ndim=0 (scalar). Got {0}.".format(
+#                 damp.ndim
+#             )
+#         )
+#     if A.ndim != 2:
+#         raise ValueError("A should have ndim=2, but had ndim={}".format(A.ndim))
+#     if b.ndim != 2:
+#         raise ValueError("b should have ndim=2, but had ndim={}".format(b.ndim))
+#     if b.shape[1] != 1:
+#         raise ValueError("b.shape[1] should 1, but was {0}".format(b.shape[1]))
+#     if A.shape[0] != b.shape[0]:
+#         raise ValueError(
+#             "A.shape[0] and b.shape[0] should be equal ({0} != {1})".format(
+#                 A.shape[0], b.shape[0]
+#             )
+#         )
+#     damp = (
+#         damp
+#         if torch.is_tensor(damp)
+#         else torch.tensor(damp, dtype=A.dtype, device=A.device)
+#     )
+
+#     # Construct the normal equations
+#     A_t = torch.transpose(A, 0, 1)
+#     damp_matrix = torch.eye(A.shape[0]).to(A.device)
+#     A_At = torch.matmul(A, A_t) + damp_matrix * damp
+
+#     # Solve the normal equations (for now, by inversion!)
+#     return torch.matmul(A_t, torch.matmul(torch.inverse(A_At),  b))
+
+
 def computeColorGradient(tgt_pc, tgt_colors, tgt_normals):
     """Compute the gradient of the color of the continuous color funciton around the target point
 
@@ -29,10 +100,12 @@ def computeColorGradient(tgt_pc, tgt_colors, tgt_normals):
         _type_: _description_
     """ 
     tgt_colors = tgt_colors.contiguous()
-    tgt_d_colors = torch.zeros(tgt_pc.size())
+    tgt_d_colors = torch.zeros(tgt_pc.size(), device=tgt_colors.device)
 
-    _KNN = knn_points(tgt_colors, tgt_colors)
+    _KNN = knn_points(tgt_colors, tgt_colors, K=3)
     dist, idx = _KNN.dists.squeeze(-1), _KNN.idx.squeeze(-1)
+    # DEBUG
+    # print("index of nn size: ", idx.size())
 
     # distance threshold for knn
     dist_thresh = 1
@@ -45,24 +118,30 @@ def computeColorGradient(tgt_pc, tgt_colors, tgt_normals):
 
     n_points = tgt_pc.shape[1]
     for i in range(n_points):
-        nn = idx.size(dim=2)
+        nn = len(idx[0, i, :])
+        # DEBUG
+        # print("number of nn: ", nn)
         if nn == 0:
             break
-        A = torch.zeros(nn, 3)
-        b = torch.zeros(nn, 1)
+        A = torch.zeros(nn, 3, device=tgt_colors.device)
+        b = torch.zeros(nn, 1, device=tgt_colors.device)
         vt = tgt_pc[0, i, :]
         intensity_t = torch.sum(tgt_colors[0, i, :]) / 3
         for j in range(nn):
             p_adj_idx = idx[0, i, j]
-            vt_adj = tgt_pc[0, j, :]
-            intensity_t_adj = torch.sum(tgt_colors[0, j, :]) / 3
+            vt_adj = tgt_pc[0, p_adj_idx, :]
+            intensity_t_adj = torch.sum(tgt_colors[0, p_adj_idx, :]) / 3
             A[j - 1, 0:3] = vt_adj - vt
             b[j - 1, 0] = intensity_t_adj - intensity_t
         
         A[nn - 1, :] = (nn - 1) * tgt_normals[0, i, :]
         b[nn - 1, :] = 0
 
-        tgt_d_colors[0, i, :] = solve_linear_system(A, b)
+        sol = solve_linear_system(A, b).squeeze(-1)
+        # DEBUG
+        # print("color gradient: ", sol.is_cuda)
+
+        tgt_d_colors[0, i, :] = sol
 
     return tgt_d_colors
 
@@ -228,33 +307,63 @@ def color_gauss_newton_solve(
         [nx, ny, nz, nz * sy - ny * sz, nx * sz - nz * sx, ny * sx - nx * sy], 1
     )
     b_geometric = sqrt_lambda_geometric * (nx * (dx - sx) + ny * (dy - sy) + nz * (dz - sz))
+    # DEBUG
+    # print('A_geometric size: ', A_geometric.size(), 'b_geometric size: ', b_geometric.size())
 
-    # Photometirc Jacobian and residuals
-    i_s = torch.sum(src_colors, 2) / 3
-    i_t = torch.sum(tgt_colors, 2) / 3
-    d_i_t = computeColorGradient(tgt_pc, tgt_colors, tgt_normals)
-    assoc_d_i_t = torch.index_select(d_i_t, 1, chamfer_indices)[0, :, :].view(-1, 3)
-    assoc_n = assoc_normals[0, :, :].view(-1, 3)
+    if lambda_photometric == 0:
+        A = A_geometric
+        b = b_geometric
 
-    vs = src_pc[0, dist_filter, :].view(-1, 3)
-    vt = assoc_pts[0, :, :].view(-1, 3)
-    vs_proj = vs - torch.matmul(torch.dot((vs - vt), assoc_n), assoc_n)
-    is_proj = assoc_d_i_t.dot(vs_proj - vt) + i_t[0, :, 0].view(-1, 1)
+        return A, b, chamfer_indices
+    else:
+        # DEBUG
+        print('lambda photometric: ', lambda_photometric)
+            
+        # Photometirc Jacobian and residuals
+        i_s = torch.sum(src_colors, 2) / 3
+        i_t = torch.sum(torch.index_select(tgt_colors, 1, chamfer_indices)[0, :, :].view(-1, 3), 1).unsqueeze(-1) / 3
+        # DEBUG
+        print(i_s.size(), i_t.size())
+        d_i_t = computeColorGradient(tgt_pc, tgt_colors, tgt_normals)
+        # DEBUG
+        # print(tgt_colors.is_cuda, d_i_t.is_cuda)
+        assoc_d_i_t = torch.index_select(d_i_t, 1, chamfer_indices)[0, :, :].view(-1, 3)
+        assoc_n = assoc_normals[0, :, :].view(-1, 3)
 
-    M = torch.eye(assoc_pts.size(dim=1)) - torch.matmul(assoc_n, assoc_n.transpose(0, 1))
-    d_M = torch.matmul(assoc_d_i_t.transpose(0, 1), M)
+        vs = src_pc[0, dist_filter, :].view(-1, 3)
+        vt = assoc_pts[0, :, :].view(-1, 3)
+        # DEBUG
+        # print(vs.size(), vt.size(), assoc_n.size())
 
-    dMx = dMx[:, 0].view(-1, 1)
-    dMy = dMx[:, 0].view(-1, 1)
-    dMz = dMx[:, 0].view(-1, 1)
+        vs_proj = vs - torch.sum((vs - vt) * assoc_n, dim=1).unsqueeze(-1) * assoc_n
+        is_proj = torch.sum(assoc_d_i_t * (vs_proj - vt)).unsqueeze(-1) + i_t[0, :].view(-1, 1)
+        # DEBUG
+        # print('vs_proj size: ', vs_proj.size(), 'is_proj size: ', is_proj.size())
 
-    A_photometric = sqrt_lambda_photometric * torch.cat(
-        [dMx, dMy, dMz, dMz * sy - dMy * sz, dMx * sz - dMz * sx, dMy * sx - dMx * sy], 1
-    )
-    b_photometric = sqrt_lambda_photometric * (is_proj - i_s[0, :, 0].view(-1, 1))
-    
-    A = torch.cat([A_geometric, A_photometric], 1)
-    b = torch.cat([b_geometric, b_photometric], 1)
+        M = torch.eye(assoc_pts.size(dim=1), device=src_pc.device) - torch.matmul(assoc_n, assoc_n.transpose(0, 1))
+        d_M = torch.matmul(assoc_d_i_t.transpose(0, 1), M)
+        # DEBUG
+        # print('d_M size: ', d_M.size())
+
+        dMx = d_M[0, :].view(-1, 1)
+        dMy = d_M[1, :].view(-1, 1)
+        dMz = d_M[2, :].view(-1, 1)
+
+        # DEBUG
+        # print('dMx size: ', dMx.size(), 'sx size: ', sx.size())
+
+        A_photometric = sqrt_lambda_photometric * torch.cat(
+            [dMx, dMy, dMz, dMz * sy - dMy * sz, dMx * sz - dMz * sx, dMy * sx - dMx * sy], 1
+        )
+        b_photometric = sqrt_lambda_photometric * (i_s[0, :].view(-1, 1) - is_proj)
+        # DEBUG
+        # print('A_photometric size: ', A_photometric.size(), 'b_photometric size: ', b_photometric.size())
+        
+        A = torch.cat([A_geometric, A_photometric], 0)
+        b = torch.cat([b_geometric, b_photometric], 0)
+
+    # DEBUG
+    # print('A size: ', A.size(), 'b size: ', b.size())
     
     return A, b, chamfer_indices
 
