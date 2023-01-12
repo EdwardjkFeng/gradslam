@@ -4,7 +4,7 @@ import torch
 
 from ..structures.pointclouds import Pointclouds
 from .base import OdometryProvider
-from .icputils import point_to_plane_ICP
+from .coloricputils import color_ICP
 
 __all__ = ["ColorICPOdometryProvider"]
 
@@ -70,8 +70,8 @@ class ColorICPOdometryProvider(OdometryProvider):
             raise ValueError(
                 "maps_pointclouds missing normals. Map normals must be provided if using ColorICPOdometryProvider"
             )
-        if len(maps_pointclouds) != (frames_pointclouds):
-            raise TypeError(
+        if len(maps_pointclouds) != len(frames_pointclouds):
+            raise ValueError(
                 "Batch size of maps_pointclouds and frames_pointclouds should be equal ({0} != {1})".format(
                     len(maps_pointclouds), len(frames_pointclouds)
                 )
@@ -85,7 +85,9 @@ class ColorICPOdometryProvider(OdometryProvider):
             # TODO: use color icp
             transform, _ = color_ICP(
                 frames_pointclouds.points_list[b].unsqueeze(0),
+                frames_pointclouds.colors_list[b].unsqueeze(0),
                 maps_pointclouds.points_list[b].unsqueeze(0),
+                maps_pointclouds.colors_list[b].unsqueeze(0),
                 maps_pointclouds.normals_list[b].unsqueeze(0),
                 initial_transform,
                 numiters=self.numiters,
@@ -96,47 +98,3 @@ class ColorICPOdometryProvider(OdometryProvider):
             transforms.append(transform)
         
         return torch.stack(transforms).unsqueeze(1)
-        
-
-def color_ICP(
-    src_pc: torch.Tensor,
-    tgt_pc: torch.Tensor,
-    tgt_normals: torch.Tensor,
-    initial_transform: Optional[torch.Tensor] = None,
-    numiters: int = 20,
-    damp: float = 1e-8,
-    dist_thresh: Union[float, int, None] = None,
-):
-    """Computes a rigid transformation between 'tgt_pc' (target pointcloud) and 'src_pc' (source pointcloud) using a 
-    point-to-point error metric and the LM (Levenberg-Marquardt) solver.
-
-    Args:
-        src_pc (torch.Tensor): Source pointcloud (the pointcloud that needs warping).
-        tgt_pc (torch.Tensor): Target pointcloud (the pointcloud to which the source pointcloud must be warped to).
-        tgt_normals (torch.Tensor): Per-point normal vectors for each point in the target pointcloud.
-        initial_transform (torch.Tensor or None): The initial estimate of the transformation between 'src_pc'
-            and 'tgt_pc'. If None, will use the identity matrix as the initial transform. Default: None
-        numiters (int, optional): Number of iterations to run the optimization for. Default: 20
-        damp (float, optional): Damping coefficient for nonlinear least-squares. Default: 1e-8
-        dist_thresh (Union[float, int, None], optional): Distance threshold for removing `src_pc` points distant from `tgt_pc`.
-            Default: None
-    
-    Returns:
-        tuple: tuple containing:
-
-        - transform (torch.Tensor): linear system residual
-        - chamfer_indices (torch.Tensor): Index of the closest point in 'tgt_pc' for each point in 'src_pc' that was not 
-          filtered out.
-
-    Shape:
-        - src_pc: :math:`(1, N_s, 3)`
-        - tgt_pc: :math:`(1, N_t, 3)`
-        - tgt_normals: :math:`(1, N_t, 3)`
-        - initial_transform: :math:`(4, 4)`
-        - transform: :math:`(4, 4)`
-        - chamfer_indices: :math:`(1, N_sf)` where :math:`N_sf \leq N_s`
-    """
-    if not torch.is_tensor(src_pc):
-        raise TypeError(
-            "Expected src_pc to be of type torch.Tensor. Got {0}.".format(type(src_pc))
-        )

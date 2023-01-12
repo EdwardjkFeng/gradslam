@@ -7,6 +7,7 @@ from kornia.geometry.linalg import compose_transformations
 
 from ..odometry.icp import ICPOdometryProvider
 from ..odometry.gradicp import GradICPOdometryProvider
+from ..odometry.coloricp import ColorICPOdometryProvider
 from ..odometry.icputils import downsample_pointclouds, downsample_rgbdimages
 from ..structures.pointclouds import Pointclouds
 from ..structures.rgbdimages import RGBDImages
@@ -77,7 +78,7 @@ class ICPSLAM(nn.Module):
         device: Union[torch.device, str, None] = None,
     ):
         super().__init__()
-        if odom not in ["gt", "icp", "gradicp"]:
+        if odom not in ["gt", "icp", "gradicp", "coloricp"]:
             msg = "odometry method ({}) not supported for PointFusion. ".format(odom)
             msg += "Currently supported odometry modules for PointFusion are: 'gt', 'icp', 'gradicp'"
             raise ValueError(msg)
@@ -89,9 +90,9 @@ class ICPSLAM(nn.Module):
             odomprov = GradICPOdometryProvider(
                 numiters, damp, dist_thresh, lambda_max, B, B2, nu
             )
-        elif odom == 'color_icp':
+        elif odom == 'coloricp':
             odomprov = ColorICPOdometryProvider(
-                numiters, damp, dist_thresh, lambda_max, B, B2, nu
+                numiters, damp, dist_thresh
             )
 
         self.odom = odom
@@ -239,7 +240,7 @@ class ICPSLAM(nn.Module):
                 )
             return live_frame.poses
 
-        if self.odom in ["icp", "gradicp"]:
+        if self.odom in ["icp", "gradicp", "coloricp"]:
             live_frame.poses = prev_frame.poses
             frames_pc = downsample_rgbdimages(live_frame, self.dsratio)
             pc2im_bnhw = find_active_map_points(pointclouds, prev_frame)
