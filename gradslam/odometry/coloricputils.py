@@ -104,7 +104,7 @@ def computeColorGradient(tgt_pc, tgt_colors, tgt_normals):
     # tgt_normals = tgt_normals.contiguous()
     tgt_d_colors = torch.zeros(tgt_pc.size(), device=tgt_colors.device)
 
-    _KNN = knn_points(tgt_pc, tgt_pc, K=4)
+    _KNN = knn_points(tgt_pc, tgt_pc, K=16)
     dist, idx = _KNN.dists.squeeze(-1), _KNN.idx.squeeze(-1)
     # DEBUG
     # print("index of nn size: ", idx.size())
@@ -124,12 +124,12 @@ def computeColorGradient(tgt_pc, tgt_colors, tgt_normals):
     tgt_colors = tgt_colors[0, dist_filter, :]
     tgt_normals = tgt_normals[0, dist_filter, :]
     # DEBUG
-    print(tgt_pc.size())
+    # print(tgt_pc.size())
     n_points = tgt_pc.shape[1]
     for i in range(n_points):
         nn = len(idx[0, i, :])
         # DEBUG
-        print("number of nn: ", nn)
+        # print("number of nn: ", nn)
         if nn == 0:
             break
         A = torch.zeros(nn, 3, device=tgt_colors.device)
@@ -336,7 +336,7 @@ def color_gauss_newton_solve(
         i_s = torch.sum(src_colors, 2) / 3
         i_t = torch.sum(torch.index_select(tgt_colors, 1, chamfer_indices)[0, :, :].view(-1, 3), 1).unsqueeze(-1) / 3
         # DEBUG
-        print(i_s.size(), i_t.size())
+        # print(i_s.size(), i_t.size())
         # d_i_t = computeColorGradient(tgt_pc, tgt_colors, tgt_normals)
         assoc_d_i_t = computeColorGradient(assoc_pts, assoc_colors, assoc_normals)[0, :, :].view(-1, 3)
         # DEBUG
