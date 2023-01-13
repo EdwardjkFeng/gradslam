@@ -17,75 +17,75 @@ __all__ = {
 }
 
 
-# def solve_linear_system(
-#     A: torch.Tensor, b: torch.Tensor, damp: Union[float, torch.Tensor] = 1e-8
-# ):
-#     r"""Solves the normal equations of a linear system Ax = b, given the constraint matrix A and the coefficient vector
-#     b. Note that this solves the normal equations, not the linear system. That is, solves :math:`A^T A x = A^T b`,
-#     not :math:`Ax = b`.
+def solve_linear_system_PSD(
+    A: torch.Tensor, b: torch.Tensor, damp: Union[float, torch.Tensor] = 1e-8
+):
+    r"""Solves the normal equations of a linear system Ax = b, given the constraint matrix A and the coefficient vector
+    b. Note that this solves the normal equations, not the linear system. That is, solves :math:`A^T A x = A^T b`,
+    not :math:`Ax = b`.
 
-#     Args:
-#         A (torch.Tensor): The constraint matrix of the linear system.
-#         b (torch.Tensor): The coefficient vector of the linear system.
-#         damp (float or torch.Tensor): Damping coefficient to optionally condition the linear system (in practice,
-#             a damping coefficient of :math:`\rho` means that we are solving a modified linear system that adds a tiny
-#             :math:`\rho` to each diagonal element of the constraint matrix :math:`A`, so that the linear system
-#             becomes :math:`(A^TA + \rho I)x = b`, where :math:`I` is the identity matrix of shape
-#             :math:`(\text{num_of_variables}, \text{num_of_variables})`. Default: 1e-8
+    Args:
+        A (torch.Tensor): The constraint matrix of the linear system.
+        b (torch.Tensor): The coefficient vector of the linear system.
+        damp (float or torch.Tensor): Damping coefficient to optionally condition the linear system (in practice,
+            a damping coefficient of :math:`\rho` means that we are solving a modified linear system that adds a tiny
+            :math:`\rho` to each diagonal element of the constraint matrix :math:`A`, so that the linear system
+            becomes :math:`(A^TA + \rho I)x = b`, where :math:`I` is the identity matrix of shape
+            :math:`(\text{num_of_variables}, \text{num_of_variables})`. Default: 1e-8
 
-#     Returns:
-#         torch.Tensor: Solution vector of the normal equations of the linear system
+    Returns:
+        torch.Tensor: Solution vector of the normal equations of the linear system
 
-#     Shape:
-#         - A: :math:`(\text{num_of_equations}, \text{num_of_variables})`
-#         - b: :math:`(\text{num_of_equations}, 1)`
-#         - Output: :math:`(\text{num_of_variables}, 1)`
-#     """
-#     if not torch.is_tensor(A):
-#         raise TypeError(
-#             "Expected A to be of type torch.Tensor. Got {0}.".format(type(A))
-#         )
-#     if not torch.is_tensor(b):
-#         raise TypeError(
-#             "Expected b to be of type torch.Tensor. Got {0}.".format(type(b))
-#         )
-#     if not (isinstance(damp, float) or torch.is_tensor(damp)):
-#         raise TypeError(
-#             "Expected damp to be of type float or torch.Tensor. Got {0}.".format(
-#                 type(damp)
-#             )
-#         )
-#     if torch.is_tensor(damp) and damp.ndim != 0:
-#         raise ValueError(
-#             "Expected torch.Tensor damp to have ndim=0 (scalar). Got {0}.".format(
-#                 damp.ndim
-#             )
-#         )
-#     if A.ndim != 2:
-#         raise ValueError("A should have ndim=2, but had ndim={}".format(A.ndim))
-#     if b.ndim != 2:
-#         raise ValueError("b should have ndim=2, but had ndim={}".format(b.ndim))
-#     if b.shape[1] != 1:
-#         raise ValueError("b.shape[1] should 1, but was {0}".format(b.shape[1]))
-#     if A.shape[0] != b.shape[0]:
-#         raise ValueError(
-#             "A.shape[0] and b.shape[0] should be equal ({0} != {1})".format(
-#                 A.shape[0], b.shape[0]
-#             )
-#         )
-#     damp = (
-#         damp
-#         if torch.is_tensor(damp)
-#         else torch.tensor(damp, dtype=A.dtype, device=A.device)
-#     )
+    Shape:
+        - A: :math:`(\text{num_of_equations}, \text{num_of_variables})`
+        - b: :math:`(\text{num_of_equations}, 1)`
+        - Output: :math:`(\text{num_of_variables}, 1)`
+    """
+    if not torch.is_tensor(A):
+        raise TypeError(
+            "Expected A to be of type torch.Tensor. Got {0}.".format(type(A))
+        )
+    if not torch.is_tensor(b):
+        raise TypeError(
+            "Expected b to be of type torch.Tensor. Got {0}.".format(type(b))
+        )
+    if not (isinstance(damp, float) or torch.is_tensor(damp)):
+        raise TypeError(
+            "Expected damp to be of type float or torch.Tensor. Got {0}.".format(
+                type(damp)
+            )
+        )
+    if torch.is_tensor(damp) and damp.ndim != 0:
+        raise ValueError(
+            "Expected torch.Tensor damp to have ndim=0 (scalar). Got {0}.".format(
+                damp.ndim
+            )
+        )
+    if A.ndim != 2:
+        raise ValueError("A should have ndim=2, but had ndim={}".format(A.ndim))
+    if b.ndim != 2:
+        raise ValueError("b should have ndim=2, but had ndim={}".format(b.ndim))
+    if b.shape[1] != 1:
+        raise ValueError("b.shape[1] should 1, but was {0}".format(b.shape[1]))
+    if A.shape[0] != b.shape[0]:
+        raise ValueError(
+            "A.shape[0] and b.shape[0] should be equal ({0} != {1})".format(
+                A.shape[0], b.shape[0]
+            )
+        )
+    damp = (
+        damp
+        if torch.is_tensor(damp)
+        else torch.tensor(damp, dtype=A.dtype, device=A.device)
+    )
 
-#     # Construct the normal equations
-#     A_t = torch.transpose(A, 0, 1)
-#     damp_matrix = torch.eye(A.shape[0]).to(A.device)
-#     A_At = torch.matmul(A, A_t) + damp_matrix * damp
+    # Construct the normal equations
+    A_t = torch.transpose(A, 0, 1)
+    damp_matrix = torch.eye(A.shape[0]).to(A.device)
+    A_At = torch.matmul(A, A_t) + damp_matrix * damp
 
-#     # Solve the normal equations (for now, by inversion!)
-#     return torch.matmul(A_t, torch.matmul(torch.inverse(A_At),  b))
+    # Solve the normal equations (for now, by inversion!)
+    return torch.matmul(A_t, torch.matmul(torch.inverse(A_At),  b))
 
 
 def computeColorGradient(tgt_pc, tgt_colors, tgt_normals):
@@ -99,45 +99,57 @@ def computeColorGradient(tgt_pc, tgt_colors, tgt_normals):
     Returns:
         _type_: _description_
     """ 
-    tgt_colors = tgt_colors.contiguous()
+    # tgt_pc = tgt_pc.contiguous()
+    # tgt_colors = tgt_colors.contiguous()
+    # tgt_normals = tgt_normals.contiguous()
     tgt_d_colors = torch.zeros(tgt_pc.size(), device=tgt_colors.device)
 
-    _KNN = knn_points(tgt_colors, tgt_colors, K=3)
+    _KNN = knn_points(tgt_pc, tgt_pc, K=4)
     dist, idx = _KNN.dists.squeeze(-1), _KNN.idx.squeeze(-1)
     # DEBUG
     # print("index of nn size: ", idx.size())
 
     # distance threshold for knn
-    dist_thresh = 1
+    dist_thresh = 0.5
 
     dist_filter = (
-        torch.ones_like(dist[0], dtype=torch.bool)
+        torch.ones(dist.size(1), dtype=torch.bool)
         if dist_thresh is None
-        else dist[0] < dist_thresh
+        else torch.sum(dist[0], dim = 1) < dist_thresh
     )
+    # DEBUG
+    # print(dist_filter.size(), tgt_pc.size())
 
+    tgt_pc = tgt_pc[0, dist_filter, :]
+    tgt_colors = tgt_colors[0, dist_filter, :]
+    tgt_normals = tgt_normals[0, dist_filter, :]
+    # DEBUG
+    print(tgt_pc.size())
     n_points = tgt_pc.shape[1]
     for i in range(n_points):
         nn = len(idx[0, i, :])
         # DEBUG
-        # print("number of nn: ", nn)
+        print("number of nn: ", nn)
         if nn == 0:
             break
         A = torch.zeros(nn, 3, device=tgt_colors.device)
         b = torch.zeros(nn, 1, device=tgt_colors.device)
-        vt = tgt_pc[0, i, :]
-        intensity_t = torch.sum(tgt_colors[0, i, :]) / 3
+        vt = tgt_pc[i, :]
+        intensity_t = torch.sum(tgt_colors[i, :]) / 3
         for j in range(nn):
             p_adj_idx = idx[0, i, j]
-            vt_adj = tgt_pc[0, p_adj_idx, :]
-            intensity_t_adj = torch.sum(tgt_colors[0, p_adj_idx, :]) / 3
+            vt_adj = tgt_pc[p_adj_idx, :]
+            intensity_t_adj = torch.sum(tgt_colors[p_adj_idx, :]) / 3
             A[j - 1, 0:3] = vt_adj - vt
             b[j - 1, 0] = intensity_t_adj - intensity_t
         
-        A[nn - 1, :] = (nn - 1) * tgt_normals[0, i, :]
-        b[nn - 1, :] = 0
+        A[nn - 1, 0:3] = (nn - 1) * tgt_normals[i, :]
+        b[nn - 1, 0] = 0
 
-        sol = solve_linear_system(A, b).squeeze(-1)
+        # # DEBUG
+        # print(A.size(), A)
+
+        sol = solve_linear_system_PSD(A, b).squeeze(-1)
         # DEBUG
         # print("color gradient: ", sol.is_cuda)
 
@@ -317,17 +329,19 @@ def color_gauss_newton_solve(
         return A, b, chamfer_indices
     else:
         # DEBUG
-        print('lambda photometric: ', lambda_photometric)
+        # print('lambda photometric: ', lambda_photometric)
+        assoc_colors = torch.index_select(tgt_colors, 1, chamfer_indices)
             
         # Photometirc Jacobian and residuals
         i_s = torch.sum(src_colors, 2) / 3
         i_t = torch.sum(torch.index_select(tgt_colors, 1, chamfer_indices)[0, :, :].view(-1, 3), 1).unsqueeze(-1) / 3
         # DEBUG
         print(i_s.size(), i_t.size())
-        d_i_t = computeColorGradient(tgt_pc, tgt_colors, tgt_normals)
+        # d_i_t = computeColorGradient(tgt_pc, tgt_colors, tgt_normals)
+        assoc_d_i_t = computeColorGradient(assoc_pts, assoc_colors, assoc_normals)[0, :, :].view(-1, 3)
         # DEBUG
         # print(tgt_colors.is_cuda, d_i_t.is_cuda)
-        assoc_d_i_t = torch.index_select(d_i_t, 1, chamfer_indices)[0, :, :].view(-1, 3)
+        # assoc_d_i_t = torch.index_select(d_i_t, 1, chamfer_indices)[0, :, :].view(-1, 3)
         assoc_n = assoc_normals[0, :, :].view(-1, 3)
 
         vs = src_pc[0, dist_filter, :].view(-1, 3)
