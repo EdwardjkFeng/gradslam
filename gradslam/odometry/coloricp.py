@@ -20,6 +20,7 @@ class ColorICPOdometryProvider(OdometryProvider):
         numiters: int = 20,
         damp: float = 1e-8,
         dist_thresh: Union[float, int, None] = None,
+        lambda_geometric: Union[float, int] = 0.968,
     ):
         r"""Initializes internal ColorICPOdometryProvider state.
         
@@ -32,6 +33,7 @@ class ColorICPOdometryProvider(OdometryProvider):
         self.numiters = numiters
         self.damp = damp
         self.dist_thresh = dist_thresh
+        self.lambda_geometric = lambda_geometric
 
     def provide(
         self, 
@@ -93,6 +95,7 @@ class ColorICPOdometryProvider(OdometryProvider):
                 numiters=self.numiters,
                 damp=self.damp,
                 dist_thresh=self.dist_thresh,
+                lambda_geometric=self.lambda_geometric,
             )
 
             transforms.append(transform)

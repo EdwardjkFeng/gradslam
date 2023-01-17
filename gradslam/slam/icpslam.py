@@ -72,6 +72,7 @@ class ICPSLAM(nn.Module):
         damp: float = 1e-8,
         dist_thresh: Union[float, int, None] = None,
         lambda_max: Union[float, int] = 2.0,
+        lambda_geometric: Union[float, int] = 0.968,
         B: Union[float, int] = 1.0,
         B2: Union[float, int] = 1.0,
         nu: Union[float, int] = 200.0,
@@ -92,7 +93,7 @@ class ICPSLAM(nn.Module):
             )
         elif odom == 'coloricp':
             odomprov = ColorICPOdometryProvider(
-                numiters, damp, dist_thresh
+                numiters, damp, dist_thresh, lambda_geometric
             )
 
         self.odom = odom

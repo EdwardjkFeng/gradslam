@@ -73,6 +73,19 @@ def solve_linear_system_PSD(
                 A.shape[0], b.shape[0]
             )
         )
+    # damp = (
+    #     damp
+    #     if torch.is_tensor(damp)
+    #     else torch.tensor(damp, dtype=A.dtype, device=A.device)
+    # )
+
+    # # Construct the normal equations
+    # A_t = torch.transpose(A, 0, 1)
+    # damp_matrix = torch.eye(A.shape[0]).to(A.device)
+    # A_At = torch.matmul(A, A_t) + damp_matrix * damp
+
+    # # Solve the normal equations (for now, by inversion!)
+    # return torch.matmul(A_t, torch.matmul(torch.inverse(A_At),  b))
     damp = (
         damp
         if torch.is_tensor(damp)
@@ -81,11 +94,14 @@ def solve_linear_system_PSD(
 
     # Construct the normal equations
     A_t = torch.transpose(A, 0, 1)
-    damp_matrix = torch.eye(A.shape[0]).to(A.device)
-    A_At = torch.matmul(A, A_t) + damp_matrix * damp
+    damp_matrix = torch.eye(A.shape[1]).to(A.device)
+    At_A = torch.matmul(A_t, A) + damp_matrix * damp
+    if torch.linalg.det(At_A) == 0:
+        return torch.zeros(A.shape[1], 1, device=A.device)
 
     # Solve the normal equations (for now, by inversion!)
-    return torch.matmul(A_t, torch.matmul(torch.inverse(A_At),  b))
+    return torch.matmul(torch.inverse(At_A), torch.matmul(A_t, b))
+
 
 
 def computeColorGradient(tgt_pc, tgt_colors, tgt_normals):
@@ -104,46 +120,61 @@ def computeColorGradient(tgt_pc, tgt_colors, tgt_normals):
     # tgt_normals = tgt_normals.contiguous()
     tgt_d_colors = torch.zeros(tgt_pc.size(), device=tgt_colors.device)
 
-    _KNN = knn_points(tgt_pc, tgt_pc, K=16)
+    _KNN = knn_points(tgt_pc, tgt_pc, K=4)
     dist, idx = _KNN.dists.squeeze(-1), _KNN.idx.squeeze(-1)
     # DEBUG
     # print("index of nn size: ", idx.size())
 
     # distance threshold for knn
-    dist_thresh = 0.5
+    dist_thresh = 0.05
 
-    dist_filter = (
-        torch.ones(dist.size(1), dtype=torch.bool)
-        if dist_thresh is None
-        else torch.sum(dist[0], dim = 1) < dist_thresh
-    )
-    # DEBUG
-    # print(dist_filter.size(), tgt_pc.size())
+    # dist_filter = (
+    #     torch.ones(dist.size(1), dtype=torch.bool)
+    #     if dist_thresh is None
+    #     else torch.sum(dist[0], dim = 1) < dist_thresh
+    # )
+    # # DEBUG
+    # # print(dist_filter.size(), tgt_pc.size())
+    # print(torch.sum(dist[0], dim=1).size())
+    # # print(dist_filter)
 
-    tgt_pc = tgt_pc[0, dist_filter, :]
-    tgt_colors = tgt_colors[0, dist_filter, :]
-    tgt_normals = tgt_normals[0, dist_filter, :]
+    # tgt_pc = tgt_pc[0, dist_filter, :]
+    # tgt_colors = tgt_colors[0, dist_filter, :]
+    # tgt_normals = tgt_normals[0, dist_filter, :]
     # DEBUG
     # print(tgt_pc.size())
     n_points = tgt_pc.shape[1]
     for i in range(n_points):
-        nn = len(idx[0, i, :])
+        dist_filter1 = (
+            torch.ones(dist.size(2), dtype=torch.bool)
+            if dist_thresh is None
+            else dist[0, i] < dist_thresh
+        )
+        dist_filter2 = (
+            torch.ones(dist.size(2), dtype=torch.bool)
+            if dist_thresh is None
+            else dist[0, i] > 1e-8
+        )
+        dist_filter = dist_filter1.logical_and(dist_filter2)
+        valid_idx = idx[0, i, dist_filter]
+        nn = valid_idx.size(0)
+        # print(valid_idx, valid_idx.size())
         # DEBUG
         # print("number of nn: ", nn)
         if nn == 0:
             break
         A = torch.zeros(nn, 3, device=tgt_colors.device)
         b = torch.zeros(nn, 1, device=tgt_colors.device)
-        vt = tgt_pc[i, :]
-        intensity_t = torch.sum(tgt_colors[i, :]) / 3
+        vt = tgt_pc[0, i, :]
+        intensity_t = torch.sum(tgt_colors[0, i, :]) / 3
         for j in range(nn):
-            p_adj_idx = idx[0, i, j]
-            vt_adj = tgt_pc[p_adj_idx, :]
-            intensity_t_adj = torch.sum(tgt_colors[p_adj_idx, :]) / 3
+            p_adj_idx = valid_idx[j]
+            vt_adj = tgt_pc[0, p_adj_idx, :]
+            intensity_t_adj = torch.sum(tgt_colors[0, p_adj_idx, :]) / 3
             A[j - 1, 0:3] = vt_adj - vt
             b[j - 1, 0] = intensity_t_adj - intensity_t
         
-        A[nn - 1, 0:3] = (nn - 1) * tgt_normals[i, :]
+        A[nn - 1, 0:3] = (nn - 1) * tgt_normals[0, i, :]
         b[nn - 1, 0] = 0
 
         # # DEBUG
@@ -165,6 +196,7 @@ def color_gauss_newton_solve(
     tgt_colors: torch.Tensor,
     tgt_normals: torch.Tensor,
     dist_thresh: Union[float, int, None] = None,
+    lambda_geometric: Union[float, int]  = 0.968,
 ):
     r"""Computes Gauss Newton step by forming linear equation. Points from `src_pc` which have a distance greater
     than `dist_thresh` to the closest point in `tgt_pc` will be filtered.
@@ -228,6 +260,13 @@ def color_gauss_newton_solve(
                 type(dist_thresh)
             )
         )
+    if not (isinstance(lambda_geometric, float) 
+            or isinstance(lambda_geometric, int)):
+        raise TypeError(
+            "Expected lambda_geometric to be of type float or int. Got {0}.".format(
+                type(lambda_geometric)
+            )
+        )
     if src_pc.ndim != 3:
         raise ValueError(
             "src_pc should have ndim=3, but had ndim={}".format(src_pc.ndim)
@@ -276,7 +315,7 @@ def color_gauss_newton_solve(
         )
 
     # Constant weights to balance geometric and photometric terms
-    lambda_geometric = 0.968
+    # lambda_geometric = 0.968
     lambda_photometric = 1 - lambda_geometric
     sqrt_lambda_geometric = math.sqrt(lambda_geometric)
     sqrt_lambda_photometric = math.sqrt(lambda_photometric)
@@ -322,6 +361,8 @@ def color_gauss_newton_solve(
     # DEBUG
     # print('A_geometric size: ', A_geometric.size(), 'b_geometric size: ', b_geometric.size())
 
+    print(lambda_geometric)
+
     if lambda_photometric == 0:
         A = A_geometric
         b = b_geometric
@@ -350,18 +391,28 @@ def color_gauss_newton_solve(
         # print(vs.size(), vt.size(), assoc_n.size())
 
         vs_proj = vs - torch.sum((vs - vt) * assoc_n, dim=1).unsqueeze(-1) * assoc_n
-        is_proj = torch.sum(assoc_d_i_t * (vs_proj - vt)).unsqueeze(-1) + i_t[0, :].view(-1, 1)
+        is_proj = torch.sum(assoc_d_i_t * (vs_proj - vt), dim=1).unsqueeze(-1) + i_t[0, :].view(-1, 1)
         # DEBUG
         # print('vs_proj size: ', vs_proj.size(), 'is_proj size: ', is_proj.size())
 
-        M = torch.eye(assoc_pts.size(dim=1), device=src_pc.device) - torch.matmul(assoc_n, assoc_n.transpose(0, 1))
-        d_M = torch.matmul(assoc_d_i_t.transpose(0, 1), M)
-        # DEBUG
-        # print('d_M size: ', d_M.size())
+        # M = torch.eye(assoc_pts.size(dim=1), device=src_pc.device) - torch.matmul(assoc_n, assoc_n.transpose(0, 1))
+        # d_M = torch.matmul(assoc_d_i_t.transpose(0, 1), M)
 
-        dMx = d_M[0, :].view(-1, 1)
-        dMy = d_M[1, :].view(-1, 1)
-        dMz = d_M[2, :].view(-1, 1)
+
+        d_M = torch.zeros(assoc_d_i_t.size(), device=assoc_d_i_t.device)
+        print(d_M.size(), assoc_d_i_t.size(), assoc_n.size())
+        for i in range(assoc_d_i_t.size(0)):
+            d_M[i, :] = torch.matmul(assoc_d_i_t[i, :].view(1, -1), torch.eye(3, device=assoc_d_i_t.device) - torch.matmul(assoc_n[i, :].view(-1, 1), assoc_n[i, :].view(1, -1)))
+
+        # DEBUG
+        print('d_M size: ', d_M.size())
+
+        # dMx = d_M[0, :].view(-1, 1)
+        # dMy = d_M[1, :].view(-1, 1)
+        # dMz = d_M[2, :].view(-1, 1)
+        dMx = d_M[:, 0].view(-1, 1)
+        dMy = d_M[:, 1].view(-1, 1)
+        dMz = d_M[:, 2].view(-1, 1)
 
         # DEBUG
         # print('dMx size: ', dMx.size(), 'sx size: ', sx.size())
@@ -369,7 +420,7 @@ def color_gauss_newton_solve(
         A_photometric = sqrt_lambda_photometric * torch.cat(
             [dMx, dMy, dMz, dMz * sy - dMy * sz, dMx * sz - dMz * sx, dMy * sx - dMx * sy], 1
         )
-        b_photometric = sqrt_lambda_photometric * (i_s[0, :].view(-1, 1) - is_proj)
+        b_photometric = - sqrt_lambda_photometric * (i_s[0, :].view(-1, 1) - is_proj)
         # DEBUG
         # print('A_photometric size: ', A_photometric.size(), 'b_photometric size: ', b_photometric.size())
         
@@ -392,6 +443,7 @@ def color_ICP(
     numiters: int = 20,
     damp: float = 1e-8,
     dist_thresh: Union[float, int, None] = None,
+    lambda_geometric: Union[float, int] = 0.968,
 ):
     """Computes a rigid transformation between 'tgt_pc' (target pointcloud) and 'src_pc' (source pointcloud) using a 
     point-to-point error metric and the LM (Levenberg-Marquardt) solver.
@@ -484,7 +536,7 @@ def color_ICP(
     for it in range(numiters):
         # From the linear system and compute the residual
         A, b, chamfer_indices = color_gauss_newton_solve(
-            src_pc, src_colors, tgt_pc, tgt_colors, tgt_normals, dist_thresh
+            src_pc, src_colors, tgt_pc, tgt_colors, tgt_normals, dist_thresh, lambda_geometric
         )
         residual = b[:, 0]
 
@@ -504,7 +556,7 @@ def color_ICP(
 
         # Form new linear system and compute one-step residual
         _, one_step_b, chamfer_indices_onestep = color_gauss_newton_solve(
-            one_step_pc, src_colors, tgt_pc, tgt_colors, tgt_normals, dist_thresh
+            one_step_pc, src_colors, tgt_pc, tgt_colors, tgt_normals, dist_thresh, lambda_geometric
         )
         one_step_residual = one_step_b[:, 0]
 
