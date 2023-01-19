@@ -98,8 +98,8 @@ def solve_linear_system_PSD(
     At_A = torch.matmul(A_t, A) + damp_matrix * damp
 
     # Avoid numerical instablitiy
-    # if torch.linalg.det(At_A) == 0:
-    #     return torch.zeros(A.shape[1], 1, device=A.device)
+    if torch.linalg.det(At_A) == 0:
+        return torch.zeros(A.shape[1], 1, device=A.device)
 
     # Solve the normal equations (for now, by inversion!)
     return torch.matmul(torch.inverse(At_A), torch.matmul(A_t, b))
