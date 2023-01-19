@@ -96,6 +96,8 @@ def solve_linear_system_PSD(
     A_t = torch.transpose(A, 0, 1)
     damp_matrix = torch.eye(A.shape[1]).to(A.device)
     At_A = torch.matmul(A_t, A) + damp_matrix * damp
+
+    # Avoid numerical instablitiy
     if torch.linalg.det(At_A) == 0:
         return torch.zeros(A.shape[1], 1, device=A.device)
 
@@ -314,16 +316,8 @@ def color_gauss_newton_solve(
             )
         )
 
-    # Constant weights to balance geometric and photometric terms
-    # lambda_geometric = 0.968
-    lambda_photometric = 1 - lambda_geometric
-    sqrt_lambda_geometric = math.sqrt(lambda_geometric)
-    sqrt_lambda_photometric = math.sqrt(lambda_photometric)
-
     src_pc = src_pc.contiguous()
     tgt_pc = tgt_pc.contiguous()
-    src_colors = src_colors.contiguous()
-    tgt_colors = tgt_colors.contiguous()
     tgt_normals = tgt_normals.contiguous()
 
     _KNN = knn_points(src_pc, tgt_pc)
@@ -354,21 +348,25 @@ def color_gauss_newton_solve(
     nz = assoc_normals[0, :, 2].view(-1, 1)
     
     # Geometric Jacobian and residuals
-    A_geometric = sqrt_lambda_geometric * torch.cat(
+    A = torch.cat(
         [nx, ny, nz, nz * sy - ny * sz, nx * sz - nz * sx, ny * sx - nx * sy], 1
     )
-    b_geometric = sqrt_lambda_geometric * (nx * (dx - sx) + ny * (dy - sy) + nz * (dz - sz))
+    b = nx * (dx - sx) + ny * (dy - sy) + nz * (dz - sz)
     # DEBUG
     # print('A_geometric size: ', A_geometric.size(), 'b_geometric size: ', b_geometric.size())
 
-    print(lambda_geometric)
-
-    if lambda_photometric == 0:
-        A = A_geometric
-        b = b_geometric
-
+    if lambda_geometric == 1.0:
         return A, b, chamfer_indices
     else:
+        # DEBUG
+        # print(lambda_geometric)
+        src_colors = src_colors.contiguous()
+        tgt_colors = tgt_colors.contiguous()
+
+        # Constant weights to balance geometric and photometric terms
+        lambda_photometric = 1 - lambda_geometric
+        sqrt_lambda_geometric = math.sqrt(lambda_geometric)
+        sqrt_lambda_photometric = math.sqrt(lambda_photometric)
         # DEBUG
         # print('lambda photometric: ', lambda_photometric)
         assoc_colors = torch.index_select(tgt_colors, 1, chamfer_indices)
@@ -400,12 +398,12 @@ def color_gauss_newton_solve(
 
 
         d_M = torch.zeros(assoc_d_i_t.size(), device=assoc_d_i_t.device)
-        print(d_M.size(), assoc_d_i_t.size(), assoc_n.size())
+        # print(d_M.size(), assoc_d_i_t.size(), assoc_n.size())
         for i in range(assoc_d_i_t.size(0)):
             d_M[i, :] = torch.matmul(assoc_d_i_t[i, :].view(1, -1), torch.eye(3, device=assoc_d_i_t.device) - torch.matmul(assoc_n[i, :].view(-1, 1), assoc_n[i, :].view(1, -1)))
 
         # DEBUG
-        print('d_M size: ', d_M.size())
+        # print('d_M size: ', d_M.size())
 
         # dMx = d_M[0, :].view(-1, 1)
         # dMy = d_M[1, :].view(-1, 1)
@@ -424,8 +422,8 @@ def color_gauss_newton_solve(
         # DEBUG
         # print('A_photometric size: ', A_photometric.size(), 'b_photometric size: ', b_photometric.size())
         
-        A = torch.cat([A_geometric, A_photometric], 0)
-        b = torch.cat([b_geometric, b_photometric], 0)
+        A = torch.cat([sqrt_lambda_geometric * A, A_photometric], 0)
+        b = torch.cat([sqrt_lambda_geometric* b, b_photometric], 0)
 
     # DEBUG
     # print('A size: ', A.size(), 'b size: ', b.size())
@@ -437,8 +435,8 @@ def color_ICP(
     src_pc: torch.Tensor,
     src_colors: torch.Tensor,
     tgt_pc: torch.Tensor,
-    tgt_normals: torch.Tensor,
     tgt_colors: torch.Tensor,
+    tgt_normals: torch.Tensor,
     initial_transform: Optional[torch.Tensor] = None,
     numiters: int = 20,
     damp: float = 1e-8,
