@@ -25,13 +25,13 @@ __all__ = {
 }
 
 
-def load_trained_model():
+def load_trained_model(device):
     args = {
         "visualize_embeddings": False,
         "config": "indoor",
     }
 
-    trained_model = Registration3dNetwork(config=args["config"], eval_mode=False, visualize_embeddings=args["visualize_embeddings"])
+    trained_model = Registration3dNetwork(config=args["config"], eval_mode=True, visualize_embeddings=args["visualize_embeddings"]).to(device)
     
     return trained_model
 
@@ -51,12 +51,11 @@ def deep_3d_registraiton(source_pcd, source_normals, target_pcd, target_normals,
 
     # Create graph pair
     graph_pair = to_graph_pair(source, target, R, t)
-    trained_model = load_trained_model()
+    trained_model = load_trained_model(device)
 
     network_output = trained_model.forward(graph_pair)
 
     transform = torch.eye(4, device=device)
-    print(network_output['t'].size())
     transform[:3, :3] = network_output['R']
     transform[:3, 3] = network_output['t'].squeeze()
 
