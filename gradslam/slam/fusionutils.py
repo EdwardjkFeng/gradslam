@@ -755,6 +755,9 @@ def update_map_aggregate(
     if not inplace:
         pointclouds = pointclouds.clone()
     pointclouds.append_points(new_pointclouds)
+    del new_pointclouds
+    torch.cuda.empty_cache()
+
     return pointclouds
 
 
