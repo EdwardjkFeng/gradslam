@@ -1,0 +1,3 @@
+[submodule "gradslam/deep_3d_registration"]
+	path = gradslam/deep_3d_registration
+	url = git@gitlab.vision.in.tum.de:fej/deep-3d-registration.git
