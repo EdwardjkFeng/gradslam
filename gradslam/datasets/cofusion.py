@@ -82,7 +82,7 @@ class Cofusion(data.Dataset):
         self.start = start
         self.end = end
         if start < 0:
-            raise ValueError("start must be positive. Got {0}.".format(stride))
+            raise ValueError("start must be positive. Got {0}.".format(start))
         if not (end is None or end > start):
             raise ValueError(
                 "end ({0}) must be None or greater than start ({1})".format(end, start)
