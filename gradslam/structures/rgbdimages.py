@@ -906,7 +906,7 @@ class RGBDImages(object):
         fig.update_layout(updatemenus=updatemenus, sliders=sliders)
 
         if require_channel_convertion:
-            self.to_channels_first()
+            self.to_channels_first_()
 
         return fig
 
