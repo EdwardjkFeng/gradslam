@@ -170,7 +170,6 @@ def img_to_b64str(img, quality=95):
     if img.ndim != 2 and img.ndim != 3:
         raise ValueError(f"img.ndim must be 2 or 3, but was {img.ndim}")
     encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
-    print(img.shape)
     img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR) if img.ndim == 3 else img
     retval, buffer = cv2.imencode(".jpg", img, encode_param)
     imstr = base64.b64encode(buffer).decode("utf-8")
