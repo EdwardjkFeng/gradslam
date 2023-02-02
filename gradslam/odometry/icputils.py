@@ -649,11 +649,29 @@ def downsample_rgbdimages(rgbdimages: RGBDImages, ds_ratio: int) -> Pointclouds:
         )
 
     B = len(rgbdimages)
+    if rgbdimages.channels_first:
+        rgbdimages.to_channels_last_()
 
     # Valid depths mask
     mask = rgbdimages.valid_depth_mask.squeeze(-1)[..., ::ds_ratio, ::ds_ratio]
 
+    print(mask.size())
+
     # Downsample points and normals
+    # if rgbdimages.channels_first:
+        # mask = mask.expand(-1, -1, 3, -1, -1)
+        # points = [
+        # rgbdimages.global_vertex_map[b][..., ::ds_ratio, ::ds_ratio][mask[b]]
+        #     for b in range(B)
+        # ]
+        # normals = [
+        #     rgbdimages.global_normal_map[b][..., :, ::ds_ratio, ::ds_ratio][mask[b]]
+        #     for b in range(B)
+        # ]
+        # colors = [
+        #     rgbdimages.rgb_image[b][..., :, ::ds_ratio, ::ds_ratio][mask[b]]
+        #     for b in range(B)
+        # ]
     points = [
         rgbdimages.global_vertex_map[b][..., ::ds_ratio, ::ds_ratio, :][mask[b]]
         for b in range(B)
