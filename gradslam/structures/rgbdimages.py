@@ -809,6 +809,11 @@ class RGBDImages(object):
                 "transition": {"duration": duration, "easing": "linear"},
             }
 
+        require_channel_convertion = False
+        if self.channels_first:
+            require_channel_convertion = True
+            self.to_channels_last_()
+
         torch_rgb = self.rgb_image[index]
         if (torch_rgb.max() < 1.1).item():
             torch_rgb = torch_rgb * 255
@@ -832,6 +837,8 @@ class RGBDImages(object):
             ]
 
         if not as_figure:
+            if require_channel_convertion:
+                self.to_channels_first_()
             return frames
 
         steps = [
@@ -897,6 +904,10 @@ class RGBDImages(object):
 
         fig.update(frames=frames)
         fig.update_layout(updatemenus=updatemenus, sliders=sliders)
+
+        if require_channel_convertion:
+            self.to_channels_first()
+
         return fig
 
     # TODO: rotation + transformation: keep in mind to apply to vertices, normals *and* poses
