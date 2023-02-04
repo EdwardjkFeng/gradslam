@@ -655,7 +655,7 @@ def downsample_rgbdimages(rgbdimages: RGBDImages, ds_ratio: int) -> Pointclouds:
     # Valid depths mask
     mask = rgbdimages.valid_depth_mask.squeeze(-1)[..., ::ds_ratio, ::ds_ratio]
 
-    print(mask.size())
+    # print(mask.size())
 
     # Downsample points and normals
     # if rgbdimages.channels_first:
