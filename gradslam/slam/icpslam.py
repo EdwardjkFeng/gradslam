@@ -9,6 +9,7 @@ from ..odometry.icp import ICPOdometryProvider
 from ..odometry.gradicp import GradICPOdometryProvider
 from ..odometry.coloricp import ColorICPOdometryProvider
 from ..odometry.deep3Dregistaion import Deep3DRegistrationProvider
+from ..odometry.dia import DIAOdometryProvider
 from ..odometry.icputils import downsample_pointclouds, downsample_rgbdimages
 from ..structures.pointclouds import Pointclouds
 from ..structures.rgbdimages import RGBDImages
@@ -80,7 +81,7 @@ class ICPSLAM(nn.Module):
         device: Union[torch.device, str, None] = None,
     ):
         super().__init__()
-        if odom not in ["gt", "icp", "gradicp", "coloricp", "deep3dregistration"]:
+        if odom not in ["gt", "icp", "gradicp", "coloricp", "deep3dregistration", "dia"]:
             msg = "odometry method ({}) not supported for PointFusion. ".format(odom)
             msg += "Currently supported odometry modules for PointFusion are: 'gt', 'icp', 'gradicp'"
             raise ValueError(msg)
@@ -98,6 +99,8 @@ class ICPSLAM(nn.Module):
             )
         elif odom == 'deep3dregistration':
             odomprov = Deep3DRegistrationProvider()
+        elif odom == 'dia':
+            odomprov = DIAOdometryProvider()
 
         self.odom = odom
         self.odomprov = odomprov
@@ -253,6 +256,13 @@ class ICPSLAM(nn.Module):
             # empty cuda cache
             del maps_pc, frames_pc
             torch.cuda.empty_cache()
+
+            return compose_transformations(
+                transform.squeeze(1), prev_frame.poses.squeeze(1)
+            ).unsqueeze(1)
+        elif self.odom in ["dia"]:
+            live_frame.poses = prev_frame.poses
+            transform = self.odomprov.provide(prev_frame, live_frame)
 
             return compose_transformations(
                 transform.squeeze(1), prev_frame.poses.squeeze(1)

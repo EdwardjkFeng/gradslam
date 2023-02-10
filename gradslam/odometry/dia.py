@@ -65,8 +65,8 @@ class DIAOdometryProvider(OdometryProvider):
         initial_transform = torch.eye(4, device=device)
 
         transforms = []
-        for b in range(len(pre_frame)):
-            transform, _ = direct_image_align(
+        for b in range(len(pre_frame)): # iterate over the batches
+            transform = direct_image_align(
                 cur_frame[b],
                 pre_frame[b],
                 initial_transform,
