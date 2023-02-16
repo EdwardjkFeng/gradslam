@@ -75,6 +75,7 @@ class ICPSLAM(nn.Module):
         dist_thresh: Union[float, int, None] = None,
         lambda_max: Union[float, int] = 2.0,
         lambda_geometric: Union[float, int] = 0.968,
+        num_pyr_levels: int = 3,
         B: Union[float, int] = 1.0,
         B2: Union[float, int] = 1.0,
         nu: Union[float, int] = 200.0,
@@ -100,7 +101,7 @@ class ICPSLAM(nn.Module):
         elif odom == 'deep3dregistration':
             odomprov = Deep3DRegistrationProvider()
         elif odom == 'dia':
-            odomprov = DIAOdometryProvider()
+            odomprov = DIAOdometryProvider(num_pyr_levels=num_pyr_levels, numiters=numiters)
 
         self.odom = odom
         self.odomprov = odomprov

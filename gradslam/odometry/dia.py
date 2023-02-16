@@ -16,19 +16,19 @@ class DIAOdometryProvider(OdometryProvider):
 
     def __init__(
         self,
-        numPyrLevels: int = 3,
+        num_pyr_levels: int = 3,
         numiters: int = 20,
         *params
     ):
-        if not isinstance(numPyrLevels, int):
+        if not isinstance(num_pyr_levels, int):
             raise TypeError(
-                "numPyrLevels must be int. Got {0}.".format(type(numPyrLevels))
+                "numPyrLevels must be int. Got {0}.".format(type(num_pyr_levels))
             )
         if not isinstance(numiters, int):
             raise TypeError(
                 "numiters must be int. Got {0}.".format(type(numiters))
             )
-        self.numPyrLevels = numPyrLevels
+        self.num_pyr_levels = num_pyr_levels
         self.numiters = numiters
     
     def provide(
@@ -70,8 +70,8 @@ class DIAOdometryProvider(OdometryProvider):
                 cur_frame[b],
                 pre_frame[b],
                 initial_transform,
-                numPyrLevels=self.numPyrLevels,
-                numiters=self.numiters,
+                num_pyr_levels=self.num_pyr_levels,
+                num_iters=self.numiters,
             )
         
             transforms.append(transform)
