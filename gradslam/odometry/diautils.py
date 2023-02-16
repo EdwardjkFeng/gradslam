@@ -171,9 +171,9 @@ def construct_RGBD_pyramids(
         rgb_pyramid.append(downsmaple_image(rgb_pyramid[-1]))
         intensity_pyramid.append(downsmaple_image(intensity_pyramid[-1]))
         depth_pyramid.append(downsample_depth(depth_pyramid[-1]))
-        print(rgb_pyramid[-1].size()) # ([1, 1, 3, 240, 320]) ([1, 1, 3, 120, 160])
+        # print(rgb_pyramid[-1].size()) # ([1, 1, 3, 240, 320]) ([1, 1, 3, 120, 160])
 
-    print(rgb_pyramid[-1].size()) # ([1, 1, 3, 60, 80])
+    # print(rgb_pyramid[-1].size()) # ([1, 1, 3, 60, 80])
 
     return rgb_pyramid, intensity_pyramid, depth_pyramid
 
@@ -230,7 +230,7 @@ def point_projection(points3D: torch.Tensor, H: int, W: int, K: torch.Tensor, T:
 
     # 3D-2D projection
     pixel_warped = torch.matmul(K, points3D_warped)
-    print(pixel_warped[:, :, :2, :].shape, pixel_warped[:, :, 2:3, :].shape)
+    # print(pixel_warped[:, :, :2, :].shape, pixel_warped[:, :, 2:3, :].shape)
     pixel_warped = pixel_warped[:, :, :2, :] / (pixel_warped[:, :, 2:3, :] + 1e-7)
     pixel_warped[:, :, 0, :] /= W -1
     pixel_warped[:, :, 1, :] /= H -1
@@ -245,7 +245,6 @@ def calc_residuals(
     I_curr: torch.tensor,
 ):
     *_, H, W = I_prev.shape
-    print('snippet from previous intensity:')
     
     warped_i = F.grid_sample(I_prev.view(1, 1, H, W), pixel_warped.squeeze().unsqueeze(0), padding_mode='zeros', align_corners=True).squeeze()
 
@@ -296,7 +295,7 @@ def calc_Jacobian(
     Y = points3D_warped[:, :, 1]
     Z = points3D_warped[:, :, 2]
     valid_Z = (Z > 0)
-    print(valid_Z.shape, torch.sum(~valid_Z))
+    # print(valid_Z.shape, torch.sum(~valid_Z))
     J_W_11 = fx/Z
     J_W_13 = -fx * X/(Z * Z)
     J_W_14 = -fx * (X*Y)/(Z*Z)
@@ -329,6 +328,23 @@ def calc_Jacobian(
     J = torch.matmul(J_I, J_W)
 
     return J
+
+
+def weighting(residuals: torch.Tensor):
+    device = residuals.device
+    Sigma_init = torch.tensor(1 / (5.0*5.0), device=device)
+    Sigma_ = Sigma_init
+    num = torch.count_nonzero(residuals)
+    dof = torch.tensor(5.0, device=device)
+    while torch.abs(Sigma_ - Sigma_init) > 1e-3:
+        Sigma_init = Sigma_
+        Sigma_ = torch.sum(residuals*residuals*((dof + 1) / (dof + Sigma_init * residuals * residuals)))
+        Sigma_ /= num
+        Sigma_ = 1 / Sigma_
+    
+    weights = (dof + 1) / (dof + Sigma_ * residuals * residuals)
+
+    return weights
 
 
 def solve_GaussNewton(
@@ -368,7 +384,7 @@ def solve_GaussNewton(
         valid_warped_pixel = pixel_warped.squeeze() < 1
         valid_warped_pixel = valid_warped_pixel * (pixel_warped.squeeze() > -1)
         valid_warped_pixel = valid_warped_pixel[:, :, 0] * valid_warped_pixel[:, :, 1]
-        print(valid_warped_pixel.shape, torch.sum(valid_warped_pixel))
+        # print(valid_warped_pixel.shape, torch.sum(valid_warped_pixel))
         
         # Calculate residuals
         r = calc_residuals(pixel_warped, I_prev, I_curr)
@@ -380,28 +396,30 @@ def solve_GaussNewton(
         valid_mask = valid_depth_mask * valid_warped_pixel
         r[~valid_mask] = 0.
         J[~valid_mask, :, :] = 0.
+        r = r.view(-1, 1)
+        J = J.view(-1, 6)
         # r = r.nan_to_num(nan=0.)
         # J = J.nan_to_num(nan=0.)
-
-        # weighting
-    
-        # Solve Gauss-Newton
-        J = J.view(-1, 6)
-        r = r.view(-1, 1)
-        Jt = J.T
         err = torch.sum(torch.matmul(r.T, r))
 
+        # weighting
+        weights = weighting(r)
+        r *= weights
+        J *= weights
+    
+        # Solve Gauss-Newton
+        Jt = J.T
         b = torch.matmul(Jt, r)
         A = torch.matmul(Jt, J)
         inc = -torch.linalg.solve(A, b)
-        print('gn solver, nan values in r: ', torch.sum(torch.isnan(r)))
-        print('gn solver, nan values in J: ', torch.sum(torch.isnan(J)))
+        # print('gn solver, nan values in r: ', torch.sum(torch.isnan(r)))
+        # print('gn solver, nan values in J: ', torch.sum(torch.isnan(J)))
         print('{}. iteration, error = {}'.format(i+1, err))
-        print(torch.sum(torch.isnan(b)), torch.sum(torch.isnan(A)))
+        # print(torch.sum(torch.isnan(b)), torch.sum(torch.isnan(A)))
 
         # Apply incremental to previous transformation
         T = torch.matmul(T_prev, se3_exp(inc))
-        print(T)
+        # print(T)
         T_prev = T
 
         delta = torch.abs(err - err_prev)
@@ -451,10 +469,10 @@ def direct_image_align(
         transform = solve_GaussNewton(I_prev=I_prev, d_prev=d_prev, I_curr=I_curr, d_curr=d_curr, K=K, T=transform_prev, num_iters=num_iters)
         transform_prev = transform
 
-        print('=====================')
-        print("{}. pyramid level".format(i))
+        print('==========================================')
+        print("{}. pyramid level".format(num_pyr_levels+1 - i))
         print("Transformation = \n", transform)
-        print('=====================')
+        print('==========================================')
     
     return transform
 
