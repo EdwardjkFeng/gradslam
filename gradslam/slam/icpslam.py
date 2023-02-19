@@ -10,6 +10,8 @@ from ..odometry.gradicp import GradICPOdometryProvider
 from ..odometry.coloricp import ColorICPOdometryProvider
 from ..odometry.deep3Dregistaion import Deep3DRegistrationProvider
 from ..odometry.dia import DIAOdometryProvider
+from ..odometry.dia_icp import DIA_ICPOdometryProvider
+
 from ..odometry.icputils import downsample_pointclouds, downsample_rgbdimages
 from ..structures.pointclouds import Pointclouds
 from ..structures.rgbdimages import RGBDImages
@@ -75,14 +77,14 @@ class ICPSLAM(nn.Module):
         dist_thresh: Union[float, int, None] = None,
         lambda_max: Union[float, int] = 2.0,
         lambda_geometric: Union[float, int] = 0.968,
-        num_pyr_levels: int = 3,
+        # num_pyr_levels: int = 3,
         B: Union[float, int] = 1.0,
         B2: Union[float, int] = 1.0,
         nu: Union[float, int] = 200.0,
         device: Union[torch.device, str, None] = None,
     ):
         super().__init__()
-        if odom not in ["gt", "icp", "gradicp", "coloricp", "deep3dregistration", "dia"]:
+        if odom not in ["gt", "icp", "gradicp", "coloricp", "deep3dregistration", "dia", "dia_icp"]:
             msg = "odometry method ({}) not supported for PointFusion. ".format(odom)
             msg += "Currently supported odometry modules for PointFusion are: 'gt', 'icp', 'gradicp'"
             raise ValueError(msg)
@@ -101,7 +103,9 @@ class ICPSLAM(nn.Module):
         elif odom == 'deep3dregistration':
             odomprov = Deep3DRegistrationProvider()
         elif odom == 'dia':
-            odomprov = DIAOdometryProvider(num_pyr_levels=num_pyr_levels, numiters=numiters)
+            odomprov = DIAOdometryProvider(num_pyr_levels=dsratio, numiters=numiters)
+        elif odom == 'dia_icp':
+            odomprov = DIA_ICPOdometryProvider(num_pyr_levels=dsratio, numiters=numiters, dist_thresh=dist_thresh)
 
         self.odom = odom
         self.odomprov = odomprov
@@ -141,9 +145,9 @@ class ICPSLAM(nn.Module):
                 live_frame.poses = (
                     torch.eye(4, dtype=torch.float, device=self.device)
                     .view(1, 1, 4, 4)
-                    .repeat(batch_size, 1, 1, 1)
+                    .expand(batch_size, -1, -1, -1)
                 )
-            pointclouds, live_frame.poses = self.step(
+            pointclouds, live_frame.poses, live_frame.init_T = self.step(
                 pointclouds, live_frame, prev_frame, inplace=True
             )
             prev_frame = live_frame if self.odom != "gt" else None
@@ -176,6 +180,7 @@ class ICPSLAM(nn.Module):
 
             - pointclouds (gradslam.Pointclouds): Updated :math:`B` global maps
             - poses (torch.Tensor): Poses for the live_frame batch
+            - init_T (torch.Tensor): Relative transform form prev_frame to live_frame
 
         Shape:
             - poses: :math:`(B, 1, 4, 4)`
@@ -186,9 +191,9 @@ class ICPSLAM(nn.Module):
                     type(live_frame)
                 )
             )
-        live_frame.poses = self._localize(pointclouds, live_frame, prev_frame)
+        live_frame.poses, live_frame.init_T = self._localize(pointclouds, live_frame, prev_frame)
         pointclouds = self._map(pointclouds, live_frame, inplace)
-        return pointclouds, live_frame.poses
+        return pointclouds, live_frame.poses, live_frame.init_T
 
     def _localize(
         self, pointclouds: Pointclouds, live_frame: RGBDImages, prev_frame: RGBDImages
@@ -207,6 +212,7 @@ class ICPSLAM(nn.Module):
 
         Returns:
             torch.Tensor: Poses for the live_frame batch
+            torch.Tensor: Relative transform form prev_frame to live_frame
 
         Shape:
             - Output: :math:`(B, 1, 4, 4)`
@@ -246,7 +252,7 @@ class ICPSLAM(nn.Module):
                 raise ValueError(
                     "`live_frame` must have poses when `prev_frame` is None or `odom='gt'`."
                 )
-            return live_frame.poses
+            return live_frame.poses, live_frame.init_T
 
         if self.odom in ["icp", "gradicp", "coloricp", "deep3dregistration"]:
             live_frame.poses = prev_frame.poses
@@ -260,14 +266,24 @@ class ICPSLAM(nn.Module):
 
             return compose_transformations(
                 transform.squeeze(1), prev_frame.poses.squeeze(1)
-            ).unsqueeze(1)
+            ).unsqueeze(1), transform
         elif self.odom in ["dia"]:
             live_frame.poses = prev_frame.poses
             transform = self.odomprov.provide(prev_frame, live_frame)
 
             return compose_transformations(
                 transform.squeeze(1), prev_frame.poses.squeeze(1)
-            ).unsqueeze(1)
+            ).unsqueeze(1), transform
+        elif self.odom in ["dia_icp"]:
+            live_frame.poses = prev_frame.poses
+            frames_pc = downsample_rgbdimages(live_frame, self.dsratio)
+            pc2im_bnhw = find_active_map_points(pointclouds, prev_frame)
+            maps_pc = downsample_pointclouds(pointclouds, pc2im_bnhw, self.dsratio)
+            transform = self.odomprov.provide(prev_frame, live_frame, maps_pc, frames_pc)
+
+            return compose_transformations(
+                transform.squeeze(1), prev_frame.poses.squeeze(1)
+            ).unsqueeze(1), transform
 
     def _map(
         self, pointclouds: Pointclouds, live_frame: RGBDImages, inplace: bool = False

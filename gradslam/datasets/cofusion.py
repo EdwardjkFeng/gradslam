@@ -446,8 +446,11 @@ class Cofusion(data.Dataset):
             - poses: :math:`(L, 4, 4)` where :math:`L` denotes sequence length.
             - Output: :math:`(L, 4, 4)` where :math:`L` denotes sequence length.
         """
+        # return relative_transformation(
+        #     poses[0].unsqueeze(0).repeat(poses.shape[0], 1, 1), poses,
+        # )
         return relative_transformation(
-            poses[0].unsqueeze(0).repeat(poses.shape[0], 1, 1), poses,
+            poses[0].unsqueeze(0).expand(poses.shape[0], -1, -1), poses,
         )
 
     def _homogenPoses(self, poses_point_quaternion):

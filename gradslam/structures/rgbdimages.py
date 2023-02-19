@@ -62,6 +62,7 @@ class RGBDImages(object):
         "_normal_map",
         "_global_vertex_map",
         "_global_normal_map",
+        "_init_T",
     ]
 
     def __init__(
@@ -162,6 +163,7 @@ class RGBDImages(object):
         self._intrinsics = intrinsics.to(self.device)
         self._poses = poses.to(self.device) if poses is not None else None
         self._pixel_pos = pixel_pos.to(self.device) if pixel_pos is not None else None
+        self._init_T = None
 
         self._vertex_map = None
         self._global_vertex_map = None
@@ -396,6 +398,20 @@ class RGBDImages(object):
             self._compute_global_normal_map()
         return self._global_normal_map
 
+    @property
+    def init_T(self):
+        r"""Gets the `init_T`
+
+        Returns:
+            torch.Tensor: tensor representation of `init_T`
+
+        Shape:
+            - Output: :math:`(B, L, 4, 4)`
+        """
+        if self._init_T is None:
+            self._init_T = torch.eye(4, device=self.device).expand(self._B, self._L, -1, -1)
+        return self._init_T
+
     @rgb_image.setter
     def rgb_image(self, value):
         r"""Updates `rgb_image` of self.
@@ -461,6 +477,18 @@ class RGBDImages(object):
         self._poses = value
         self._global_vertex_map = None
         self._global_normal_map = None
+
+    @init_T.setter
+    def init_T(self, value):
+        r"""Updates `pinit_T` of self.
+
+        Args:
+            value (torch.Tensor): New init_T values
+
+        Shape:
+            - value: :math:`(B, L, 4, 4)`
+        """
+        self._init_T = value
 
     def detach(self):
         r"""Detachs RGBDImages object. All internal tensors are detached individually.
@@ -648,7 +676,10 @@ class RGBDImages(object):
             meshgrid = (
                 create_meshgrid(self.h, self.w, normalized_coords=False)
                 .view(1, 1, self.h, self.w, 2)
-                .repeat(B, L, 1, 1, 1)
+            #     .repeat(B, L, 1, 1, 1)
+            #     .to(device)
+            # )
+                .expand(B, L, -1, -1, -1)
                 .to(device)
             )
             self._pixel_pos = torch.cat(
@@ -661,7 +692,8 @@ class RGBDImages(object):
             )
         Kinv = inverse_intrinsics(self._intrinsics)[..., :3, :3]
         # TODO: Time tests for all einsums. Might not be efficient (especially on cpu).
-        Kinv = Kinv.repeat(1, L, 1, 1)
+        # Kinv = Kinv.repeat(1, L, 1, 1)
+        Kinv = Kinv.expand(-1, L, -1, -1)
         # Add an extra channel of ones to meshgrid for z values
         if self.channels_first:
             self._vertex_map = (

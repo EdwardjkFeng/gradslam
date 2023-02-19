@@ -7,8 +7,7 @@ import torch.nn.functional as F
 from torchvision.transforms.functional import rgb_to_grayscale
 from torchmetrics.functional import image_gradients
 
-from ..geometry.geometryutils import transform_pointcloud
-from ..geometry.se3utils import se3_exp, se3_hat
+from ..geometry.se3utils import se3_exp
 from ..structures.pointclouds import Pointclouds
 from ..structures.rgbdimages import RGBDImages
 from .icputils import solve_linear_system
@@ -186,7 +185,7 @@ class RGBDPyramid:
         num_pyr_levels: int=3,
     ):
         self.rgb_pyramid, self.intensity_pyramid, self.depth_pyramid = construct_RGBD_pyramids(rgbdimage=rgbdimage, num_pyr_levels=num_pyr_levels)
-        self.K_pyramid = construct_intrinsics_pyramid(rgbdimage.intrinsics)
+        self.K_pyramid = construct_intrinsics_pyramid(rgbdimage.intrinsics, num_pyr_levels=num_pyr_levels)
 
 
 def depth_ambigious_backprojection(H: int, W: int, K: torch.Tensor):
@@ -221,12 +220,14 @@ def backprojection(points3D_unit: torch.Tensor, depth: torch.Tensor):
     return points3D # shape ([H, W, 3, 1])
 
 
-def point_projection(points3D: torch.Tensor, H: int, W: int, K: torch.Tensor, T: torch.Tensor):
-    device = points3D.device
-    points3D = torch.cat((points3D, torch.ones((H, W, 1, 1), device=device)), dim=2) # Homogenous coordinate
-    # print('point_projection: ', points3D.shape, points3D.dtype, T.dtype) # [H, W, 4, 1]
-    points3D_warped = torch.matmul(T, points3D) # Homogenous coordinate
-    points3D_warped = points3D_warped[:, :, :3, :]
+def transform_points3D(points3D: torch.Tensor, transform: torch.Tensor):
+    points3D_warped = torch.matmul(transform[0:3, 0:3], points3D) + transform[0:3, 3:4]
+    return points3D_warped # [H, W, 3, 1]
+
+
+def point_projection(points3D_warped: torch.Tensor, K: torch.Tensor):
+    H, W = points3D_warped.shape[0:2]
+    device = points3D_warped.device
 
     # 3D-2D projection
     pixel_warped = torch.matmul(K, points3D_warped)
@@ -242,7 +243,7 @@ def point_projection(points3D: torch.Tensor, H: int, W: int, K: torch.Tensor, T:
 def calc_residuals(
     pixel_warped: torch.Tensor,
     I_prev: torch.Tensor,
-    I_curr: torch.tensor,
+    I_curr: torch.Tensor,
 ):
     *_, H, W = I_prev.shape
     
@@ -250,6 +251,32 @@ def calc_residuals(
 
     residuals = warped_i - I_curr
     return residuals
+
+
+def calc_residuals_comb(
+    points3D_warped: torch.Tensor,
+    pixel_warped: torch.Tensor, 
+    I_prev: torch.Tensor, 
+    d_prev: torch.Tensor, 
+    I_curr: torch.Tensor,
+):
+    *_, H, W = I_prev.shape
+    
+    # 1. Photometric error
+    warped_i = F.grid_sample(I_prev.view(1, 1, H, W), pixel_warped.squeeze().unsqueeze(0), padding_mode='zeros', align_corners=True).squeeze()
+
+    r_I = warped_i - I_curr
+
+    # 2. Geometric (depth) error
+    warped_d = F.grid_sample(d_prev.view(1, 1, H, W), pixel_warped.squeeze().unsqueeze(0), padding_mode='zeros', align_corners=True).squeeze()
+
+    warped_Z = points3D_warped[:, :, 2].view(H, W)
+
+    r_Z = warped_d - warped_Z
+
+    residuals = torch.stack((r_I, r_Z), dim=2)
+    # print('r shape: ', residuals.shape)
+    return residuals # (H, W, 2)
 
 
 def calc_gradient(image: torch.Tensor):
@@ -279,11 +306,11 @@ def calc_Jacobian(
     *_, H, W = I_prev.shape
     device = I_prev.device
     # Calculate gradients
-    grad_x, grad_y = calc_gradient(I_prev) # [H, W], [H, W]
-    grad_x_warped = F.grid_sample(grad_x.view(1, 1, H, W), pixel_warped.squeeze().unsqueeze(0), padding_mode='zeros', align_corners=True).squeeze() # [H, W]
-    grad_y_warped = F.grid_sample(grad_y.view(1, 1, H, W), pixel_warped.squeeze().unsqueeze(0), padding_mode='zeros', align_corners=True).squeeze() # [H, W]
+    d_x_I, d_y_I = calc_gradient(I_prev) # [H, W], [H, W]
+    d_x_I_warped = F.grid_sample(d_x_I.view(1, 1, H, W), pixel_warped.squeeze().unsqueeze(0), padding_mode='zeros', align_corners=True).squeeze() # [H, W]
+    d_y_I_warped = F.grid_sample(d_y_I.view(1, 1, H, W), pixel_warped.squeeze().unsqueeze(0), padding_mode='zeros', align_corners=True).squeeze() # [H, W]
     
-    J_I = torch.stack((grad_x_warped, grad_y_warped), dim=2).view(H, W, 1, 2) # [H, W, 1, 2]
+    J_i = torch.stack((d_x_I_warped, d_y_I_warped), dim=2).view(H, W, 1, 2) # [H, W, 1, 2]
     # print(J_I[:10, :10])
 
     # Construct Jacobian of the warping function J_W
@@ -325,7 +352,66 @@ def calc_Jacobian(
 
     # J = J_I @ J_W
     # print(J_I, J_W)
-    J = torch.matmul(J_I, J_W)
+    J = torch.matmul(J_i, J_W)
+
+    return J
+
+
+def calc_Jacobian_comb(
+    I_prev: torch.Tensor, 
+    d_prev: torch.Tensor, 
+    K: torch.Tensor, 
+    points3D_warped: torch.Tensor, 
+    pixel_warped: torch.Tensor
+):
+    *_, H, W = I_prev.shape
+    device = I_prev.device
+
+    # 1. Photometric error Jacobian
+    # Calculate intensity gradients
+    d_x_I, d_y_I = calc_gradient(I_prev) # [H, W], [H, W]
+    d_x_I_warped = F.grid_sample(d_x_I.view(1, 1, H, W), pixel_warped.squeeze().unsqueeze(0), padding_mode='zeros', align_corners=True).squeeze() # [H, W]
+    d_y_I_warped = F.grid_sample(d_y_I.view(1, 1, H, W), pixel_warped.squeeze().unsqueeze(0), padding_mode='zeros', align_corners=True).squeeze() # [H, W]
+    
+    J_i = torch.stack((d_x_I_warped, d_y_I_warped), dim=2).view(H, W, 1, 2) # [H, W, 1, 2]
+
+    # Construct Jacobian of the warping function J_W
+    fx = K[0, 0]
+    fy = K[1, 1]
+    zeros = torch.zeros((H, W), device=device)
+    points3D_warped = points3D_warped.squeeze()
+    X = points3D_warped[:, :, 0]
+    Y = points3D_warped[:, :, 1]
+    Z = points3D_warped[:, :, 2]
+
+    J_pi_1 = torch.stack([fx/Z, zeros, -fx * X/(Z*Z)], dim=2).view(H, W, 1, 3)
+    J_pi_2 = torch.stack([zeros, fy/Z, -fy * Y/(Z*Z)], dim=2).view(H, W, 1, 3)
+    J_pi = torch.cat([J_pi_1, J_pi_2], dim=2) # (H, W, 2, 3)
+    identity = torch.eye(3, device=device).view(1, 1, 3, 3).expand(H, W, 3, 3)
+    points3D_warped_hat = torch.stack(
+        [zeros, -Z, Y, Z, zeros, -X, -Y, X, zeros], dim=2
+    ).view(H, W, 3, 3)
+    J_exp = torch.cat([identity, -points3D_warped_hat], dim=3) # (H, W, 3, 6)
+
+    J_W = torch.matmul(J_pi, J_exp) # (H, W, 2, 6)
+    # print('J_W shape: ', J_W.shape)
+
+    J_I = torch.matmul(J_i, J_W)  # (H, W, 1, 6)
+    # print('J_I shape: ', J_I.shape)
+
+    # 2. Geometirc error Jacobian
+    # Compute depth gradients
+    d_x_depth, d_y_depth = calc_gradient(d_prev)
+    d_x_depth_warped = F.grid_sample(d_x_depth.view(1, 1, H, W), pixel_warped.squeeze().unsqueeze(0), padding_mode='zeros', align_corners=True).squeeze() # [H, W]
+    d_y_depth_warped = F.grid_sample(d_y_depth.view(1, 1, H, W), pixel_warped.squeeze().unsqueeze(0), padding_mode='zeros', align_corners=True).squeeze() # [H, W]
+    J_d = torch.stack((d_x_depth_warped, d_y_depth_warped), dim=2).view(H, W, 1, 2)
+
+    J_Z = torch.matmul(torch.matmul(J_d, J_pi), J_exp) - J_exp[:, :, 2:3, :]
+    # print('J_Z shape: ', J_Z.shape)
+
+    # 3. Concanate two error terms
+    J = torch.cat([J_I, J_Z], dim=2) # (H, W, 2, 6)
+    # print('J shape: ', J.shape)
 
     return J
 
@@ -354,7 +440,8 @@ def solve_GaussNewton(
     d_curr: torch.Tensor, 
     K: torch.Tensor, 
     T: torch.Tensor, 
-    num_iters: int=10
+    num_iters: int = 10,
+    damp: float = 1e-8,
 ):
     # print("gauss newton input tensors shape:")
     # print('I_prev shape: ', I_prev.shape)
@@ -374,11 +461,13 @@ def solve_GaussNewton(
     for i in range(num_iters):
         # 2D-3D project the pixel coordinates in point coordinates in 3D space (camera coordinate system)
         cam_coord = backprojection(points3D_unit, d_curr)
+        # Transform 3D points
+        cam_coord_warped = transform_points3D(cam_coord, T_prev)
         # 3D-2D projection
-        pixel_warped = point_projection(cam_coord, H, W, K, T_prev)
+        pixel_warped = point_projection(cam_coord_warped, K)
 
         # Construct masks for valid entries
-        valid_depth_mask = (cam_coord[:, :, 2] > 0).squeeze()
+        valid_depth_mask = (cam_coord[:, :, 2] > 0).squeeze() * (cam_coord_warped[:, :, 2] > 0).squeeze()
 
         pixel_warped = pixel_warped.clamp(-2, 2)
         valid_warped_pixel = pixel_warped.squeeze() < 1
@@ -387,53 +476,88 @@ def solve_GaussNewton(
         # print(valid_warped_pixel.shape, torch.sum(valid_warped_pixel))
         
         # Calculate residuals
-        r = calc_residuals(pixel_warped, I_prev, I_curr)
+        # r = calc_residuals(pixel_warped, I_prev, I_curr)
+        r = calc_residuals_comb(cam_coord_warped, pixel_warped, I_prev, d_prev, I_curr)
 
         # Calculate Jacobians
-        J = calc_Jacobian(I_prev, K, cam_coord, pixel_warped)
+        # J = calc_Jacobian(I_prev, K, cam_coord, pixel_warped)
+        J = calc_Jacobian_comb(I_prev, d_prev, K, cam_coord_warped, pixel_warped)
 
         # Filter invalid entries
         valid_mask = valid_depth_mask * valid_warped_pixel
         r[~valid_mask] = 0.
         J[~valid_mask, :, :] = 0.
-        r = r.view(-1, 1)
-        J = J.view(-1, 6)
+        r = r.view(-1, 2, 1)
+        J = J.view(-1, 2, 6)
         # r = r.nan_to_num(nan=0.)
         # J = J.nan_to_num(nan=0.)
-        err = torch.sum(torch.matmul(r.T, r))
+        num_valid_entries = torch.sum(r[:, 0] != 0)
+        r /= num_valid_entries
+        J /= num_valid_entries
+        err = torch.sum(torch.matmul(r.transpose(-1, -2), r))
 
         # weighting
-        weights = weighting(r)
-        r *= weights
-        J *= weights
+        # weights = weighting(r)
+        # r *= weights
+        # J *= weights
+        # w = torch.tensor([1.0, 0.0], device=device, dtype=r.dtype).view(2, 1)
+        # r *= w
+        # J *= w
     
         # Solve Gauss-Newton
-        Jt = J.T
+        Jt = J.transpose(-1, -2)
         b = torch.matmul(Jt, r)
         A = torch.matmul(Jt, J)
-        inc = -torch.linalg.solve(A, b)
+        b = torch.sum(b, dim=0)
+        A = torch.sum(A, dim=0)
+        # A += torch.eye(A.shape[0], device=device) * 1e-8
+        # inc = -torch.linalg.solve(A, b)
+        inc = - solve_linear_system(A, b)
         # print('gn solver, nan values in r: ', torch.sum(torch.isnan(r)))
         # print('gn solver, nan values in J: ', torch.sum(torch.isnan(J)))
-        print('{}. iteration, error = {}'.format(i+1, err))
+        # print('{}. iteration, error = {}'.format(i+1, err))
         # print(torch.sum(torch.isnan(b)), torch.sum(torch.isnan(A)))
 
         # Apply incremental to previous transformation
-        T = torch.matmul(T_prev, se3_exp(inc))
-        # print(T)
+        T = torch.matmul(se3_exp(inc), T_prev)
         T_prev = T
 
         delta = torch.abs(err - err_prev)
-        # if delta < 1e-6:
-        #     break
+        if delta < 1e-6:
+            break
         err_prev = err
 
-    return T
+    return T, err
+
+
+def solve_LevenbergMarquardt(
+    I_prev: torch.Tensor, 
+    d_prev: torch.Tensor, 
+    I_curr: torch.Tensor, 
+    d_curr: torch.Tensor, 
+    K: torch.Tensor, 
+    T: torch.Tensor, 
+    num_iters: int = 10,
+    damp: float = 1e-8,
+):
+    transform = T
+    for i in range(num_iters):
+        transform_pc, err = solve_GaussNewton(I_prev, d_prev, I_curr, d_curr, K, transform, 1, damp)
+        _, one_step_err = solve_GaussNewton(I_prev, d_prev, I_curr, d_curr, K, transform_pc, 1, damp)
+
+        if one_step_err < err:
+            damp = damp / 2
+            transform = transform_pc
+        else:
+            damp = damp * 2
+        
+    return transform, err
 
 
 def direct_image_align(
     curr_rgbd: RGBDImages,
     prev_rgbd: RGBDImages,
-    initial_transform: torch.Tensor,
+    initial_transform: Optional[torch.Tensor] = None,
     num_pyr_levels: int = 3,
     num_iters: int = 20,
 ):
@@ -443,7 +567,12 @@ def direct_image_align(
         prev_rgbd.to_channels_first_()
 
     device = curr_rgbd.device
-    # print(curr_rgbd.depth_image.squeeze()[30:40, 30:40])
+
+    # if initial_transform is None:
+    #     initial_transform = torch.eye(4, device=device)
+    initial_transform = prev_rgbd.init_T.squeeze()
+    
+    # print('Initial T: \n', initial_transform)
 
     curr_pyramids = RGBDPyramid(rgbdimage=curr_rgbd,
                                 num_pyr_levels=num_pyr_levels)
@@ -459,20 +588,21 @@ def direct_image_align(
 
     for i in range(1, num_pyr_levels + 1):
     # for i in range(1, 2):
-        print("=========== {}. Pyramid ===========".format(num_pyr_levels+1 - i))
+        # print("=========== {}. Pyramid ===========".format(num_pyr_levels+1 - i))
         I_curr = curr_I_pyr[-i].squeeze(0)
         d_curr = curr_d_pyr[-i].squeeze(0)
         I_prev = prev_I_pyr[-i].squeeze(0)
-        d_prev = prev_d_pyr[-1].squeeze(0)
+        d_prev = prev_d_pyr[-i].squeeze(0)
         K = K_pyr[-i].squeeze()
         
-        transform = solve_GaussNewton(I_prev=I_prev, d_prev=d_prev, I_curr=I_curr, d_curr=d_curr, K=K, T=transform_prev, num_iters=num_iters)
+        transform, _ = solve_GaussNewton(I_prev=I_prev, d_prev=d_prev, I_curr=I_curr, d_curr=d_curr, K=K, T=transform_prev, num_iters=num_iters)
+        # transform, _ = solve_LevenbergMarquardt(I_prev=I_prev, d_prev=d_prev, I_curr=I_curr, d_curr=d_curr, K=K, T=transform_prev, num_iters=num_iters)
         transform_prev = transform
 
-        print('==========================================')
-        print("{}. pyramid level".format(num_pyr_levels+1 - i))
-        print("Transformation = \n", transform)
-        print('==========================================')
+        # print('==========================================')
+        # print("{}. pyramid level".format(num_pyr_levels+1 - i))
+        # print("Transformation = \n", transform)
+        # print('==========================================')
     
     return transform
 
