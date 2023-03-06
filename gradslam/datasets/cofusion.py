@@ -368,6 +368,12 @@ class Cofusion(data.Dataset):
             color = datautils.channels_first(color)
         return color
 
+    def dilate_mask(self, mask: np.ndarray):
+        r"""Dilate the masked area of dynamic objects"""
+        kernel = np.ones((5, 5), np.uint8)
+        mask_dilation = cv2.dilate(mask, kernel, iterations=1)
+        return mask_dilation
+
     def _filter_moving_objects(self, image: np.ndarray, mask: np.ndarray):
         r"""Filter moving objects from RGB image with mask.
 
@@ -378,6 +384,7 @@ class Cofusion(data.Dataset):
         Returns:
             static_image (np.ndarray): RGB image with moving objects in black
         """
+        # mask = self.dilate_mask(mask)
         mask_filter = np.sum(mask, axis=2) != 0
         if len(image.shape) == 3:
             image[mask_filter, :] = [0, 0, 0]
