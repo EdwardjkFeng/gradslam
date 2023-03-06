@@ -3,7 +3,7 @@ import warnings
 
 import torch
 import torch.nn as nn
-from kornia.geometry.linalg import compose_transformations
+from kornia.geometry.linalg import compose_transformations, inverse_transformation
 
 from ..odometry.icp import ICPOdometryProvider
 from ..odometry.gradicp import GradICPOdometryProvider
@@ -252,6 +252,8 @@ class ICPSLAM(nn.Module):
                 raise ValueError(
                     "`live_frame` must have poses when `prev_frame` is None or `odom='gt'`."
                 )
+            if prev_frame is not None:
+                live_frame.init_T = compose_transformations(prev_frame.poses.squeeze(1), live_frame.poses.squeeze(1)).unsqueeze(1)
             return live_frame.poses, live_frame.init_T
 
         if self.odom in ["icp", "gradicp", "coloricp", "deep3dregistration"]:
@@ -272,7 +274,7 @@ class ICPSLAM(nn.Module):
             transform = self.odomprov.provide(prev_frame, live_frame)
 
             return compose_transformations(
-                transform.squeeze(1), prev_frame.poses.squeeze(1)
+                prev_frame.poses.squeeze(1), transform.squeeze(1)
             ).unsqueeze(1), transform
         elif self.odom in ["dia_icp"]:
             live_frame.poses = prev_frame.poses
