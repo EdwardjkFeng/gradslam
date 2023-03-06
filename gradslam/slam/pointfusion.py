@@ -109,6 +109,8 @@ class PointFusion(ICPSLAM):
     def _map(
         self, pointclouds: Pointclouds, live_frame: RGBDImages, inplace: bool = False
     ):
+        if live_frame.channels_first:
+            live_frame.to_channels_last_()
         return update_map_fusion(
             pointclouds, live_frame, self.dist_th, self.dot_th, self.sigma, inplace
         )
