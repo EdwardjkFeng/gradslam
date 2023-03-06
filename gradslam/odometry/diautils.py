@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torchvision.transforms.functional import rgb_to_grayscale
 from torchmetrics.functional import image_gradients
 
-from ..geometry.se3utils import se3_exp
+from ..geometry.se3utils import se3_exp, se3_log, so3_exp
 from ..structures.pointclouds import Pointclouds
 from ..structures.rgbdimages import RGBDImages
 from .icputils import solve_linear_system
@@ -108,6 +108,19 @@ def downsmaple_image(image: torch.Tensor, ds_ratio: int=2, mode: str='avg'):
     return image_ds
 
 
+def downsample_image_with_depth_buffel(image: torch.Tensor, depth: torch.Tensor, ds_ratio: int=2):
+    depth_ds = torch.stack([depth[..., 0::2, 0::2], depth[..., 0::2, 1::2], depth[..., 1::2, 0::2], depth[..., 1::2, 1::2]], dim=-1)
+    num_valid_depth = torch.count_nonzero(depth_ds, dim=-1)
+    num_valid_depth[torch.where(num_valid_depth == 0)] = 1 # To avoid divid by 0
+
+    image_masked = image.clone()
+    image_masked[torch.where(depth < 0)] = 0
+
+    image_ds = (image_masked[..., 0::2, 0::2] + image_masked[..., 0::2, 1::2] + image_masked[..., 1::2, 0::2] + image_masked[..., 1::2, 1::2]) / num_valid_depth
+
+    return image_ds
+
+
 def downsample_depth(depth: torch.Tensor, ds_ratio: int=2, mode: str='avg'):
     """Downsample image, ignoring the zero depth pixels
 
@@ -168,7 +181,8 @@ def construct_RGBD_pyramids(
     
     for _ in range(num_pyr_levels - 1):
         rgb_pyramid.append(downsmaple_image(rgb_pyramid[-1]))
-        intensity_pyramid.append(downsmaple_image(intensity_pyramid[-1]))
+        # intensity_pyramid.append(downsmaple_image(intensity_pyramid[-1]))
+        intensity_pyramid.append(downsample_image_with_depth_buffel(intensity_pyramid[-1], depth_pyramid[-1]))
         depth_pyramid.append(downsample_depth(depth_pyramid[-1]))
         # print(rgb_pyramid[-1].size()) # ([1, 1, 3, 240, 320]) ([1, 1, 3, 120, 160])
 
@@ -188,7 +202,7 @@ class RGBDPyramid:
         self.K_pyramid = construct_intrinsics_pyramid(rgbdimage.intrinsics, num_pyr_levels=num_pyr_levels)
 
 
-def depth_ambigious_backprojection(H: int, W: int, K: torch.Tensor):
+def build_pointcloud_template(H: int, W: int, K: torch.Tensor):
     """Backproject the pixel coordinates to a 3D unit plane (depth is ambigious)
 
     Args:
@@ -214,7 +228,7 @@ def depth_ambigious_backprojection(H: int, W: int, K: torch.Tensor):
 
     return points3D_unit
 
-def backprojection(points3D_unit: torch.Tensor, depth: torch.Tensor):
+def build_pointcloud(points3D_unit: torch.Tensor, depth: torch.Tensor):
     *_, H, W = depth.shape
     points3D = depth.view(H, W, 1, 1) * points3D_unit
     return points3D # shape ([H, W, 3, 1])
@@ -428,9 +442,63 @@ def weighting(residuals: torch.Tensor):
         Sigma_ /= num
         Sigma_ = 1 / Sigma_
     
-    weights = (dof + 1) / (dof + Sigma_ * residuals * residuals)
+    weights = (dof + 1) / (dof + torch.sqrt(Sigma_) * residuals * residuals)
 
     return weights
+
+def solve_GradientDescent(
+    I_prev: torch.Tensor, 
+    d_prev: torch.Tensor, 
+    I_curr: torch.Tensor, 
+    d_curr: torch.Tensor, 
+    K: torch.Tensor, 
+    T: torch.Tensor, 
+    num_iters: int = 10,
+    lr: float = 1e-10,
+):
+    *_, H, W = I_curr.shape
+    device = I_curr.device
+
+    points3D_unit = build_pointcloud_template(H, W, K)
+    
+    T_prev = T
+    xi_prev = se3_log(T_prev)
+    for i in range(num_iters):
+        print(xi_prev)
+        points3D = build_pointcloud(points3D_unit, d_curr)
+        points3D_transformed = transform_points3D(points3D, T_prev)
+        pixel_warped = point_projection(points3D_transformed, K)
+
+        valid_depth_mask = (points3D[:, :, 2] > 0).squeeze() * (points3D_transformed[:, :, 2] > 0).squeeze()
+
+        pixel_warped = pixel_warped.clamp(-2, 2)
+        valid_warped_pixel = pixel_warped.squeeze() < 1
+        valid_warped_pixel = valid_warped_pixel * (pixel_warped.squeeze() > -1)
+        valid_warped_pixel = valid_warped_pixel[:, :, 0] * valid_warped_pixel[:, :, 1]
+
+        r = calc_residuals_comb(points3D_transformed, pixel_warped, I_prev, d_prev, I_curr)
+        J = calc_Jacobian_comb(I_prev, d_prev, K, points3D_transformed, pixel_warped)
+
+        valid_mask = valid_depth_mask * valid_warped_pixel
+        r[~valid_mask] = 0.
+        J[~valid_mask, :, :] = 0.
+        r = r.view(-1, 2, 1)
+        J = J.view(-1, 2, 6)
+        num_valid_entries = torch.sum(r != 0)
+        r /= num_valid_entries
+        J /= num_valid_entries
+        J = torch.sum(torch.sum(J, dim=1), dim=0)
+
+        err = torch.sum(torch.matmul(r.transpose(-1, -2), r))
+
+        inc = xi_prev - lr * J.view(6, 1)
+        print(inc, J)
+
+        T = torch.matmul(se3_exp(inc), T_prev)
+        T_prev = T
+        xi_prev = inc
+
+    return T, err
 
 
 def solve_GaussNewton(
@@ -439,7 +507,7 @@ def solve_GaussNewton(
     I_curr: torch.Tensor, 
     d_curr: torch.Tensor, 
     K: torch.Tensor, 
-    T: torch.Tensor, 
+    init_T: torch.Tensor, 
     num_iters: int = 10,
     damp: float = 1e-8,
 ):
@@ -453,14 +521,14 @@ def solve_GaussNewton(
     *_, H, W = I_curr.shape
     device = I_curr.device
     # Construct unit depth 3D point coordinates once since it's always the same for the same pyramid level
-    points3D_unit = depth_ambigious_backprojection(H, W, K)
+    points3D_unit = build_pointcloud_template(H, W, K)
 
     err_prev = torch.inf
-    T_prev = T
+    T_prev = init_T
 
     for i in range(num_iters):
         # 2D-3D project the pixel coordinates in point coordinates in 3D space (camera coordinate system)
-        cam_coord = backprojection(points3D_unit, d_curr)
+        cam_coord = build_pointcloud(points3D_unit, d_curr)
         # Transform 3D points
         cam_coord_warped = transform_points3D(cam_coord, T_prev)
         # 3D-2D projection
@@ -494,32 +562,35 @@ def solve_GaussNewton(
         num_valid_entries = torch.sum(r[:, 0] != 0)
         r /= num_valid_entries
         J /= num_valid_entries
-        err = torch.sum(torch.matmul(r.transpose(-1, -2), r))
 
         # weighting
-        # weights = weighting(r)
-        # r *= weights
-        # J *= weights
-        # w = torch.tensor([1.0, 0.0], device=device, dtype=r.dtype).view(2, 1)
+        weights = weighting(r)
+        # w = torch.tensor([0.0, 0.0], device=device, dtype=r.dtype).view(2, 1)
         # r *= w
         # J *= w
     
+        err = torch.sum(torch.matmul(r.transpose(-1, -2), r * weights))
+
         # Solve Gauss-Newton
         Jt = J.transpose(-1, -2)
-        b = torch.matmul(Jt, r)
-        A = torch.matmul(Jt, J)
-        b = torch.sum(b, dim=0)
-        A = torch.sum(A, dim=0)
-        # A += torch.eye(A.shape[0], device=device) * 1e-8
-        # inc = -torch.linalg.solve(A, b)
-        inc = - solve_linear_system(A, b)
+        b = torch.sum(torch.matmul(Jt, r * weights), dim=0)
+        A = torch.sum(torch.matmul(Jt, J * weights), dim=0)
+        # TODO not accurate formulism
+        # b += 0.9 * inc_prev
+        A += torch.eye(A.shape[0], device=device) * damp
+        inc = - torch.linalg.solve(A, b)
+        # inc = - solve_linear_system(J, r)
         # print('gn solver, nan values in r: ', torch.sum(torch.isnan(r)))
         # print('gn solver, nan values in J: ', torch.sum(torch.isnan(J)))
         # print('{}. iteration, error = {}'.format(i+1, err))
         # print(torch.sum(torch.isnan(b)), torch.sum(torch.isnan(A)))
 
         # Apply incremental to previous transformation
-        T = torch.matmul(se3_exp(inc), T_prev)
+        # T = torch.matmul(se3_exp(inc), T_prev)
+        T = torch.ones_like(T_prev)
+        T[:3, :3] = torch.matmul(so3_exp(inc[3:]), T_prev[:3, :3])
+        T[:3, 3:4] = T_prev[:3, 3:4] + inc[:3].view(3, 1)
+
         T_prev = T
 
         delta = torch.abs(err - err_prev)
@@ -544,7 +615,7 @@ def solve_LevenbergMarquardt(
     for i in range(num_iters):
         transform_pc, err = solve_GaussNewton(I_prev, d_prev, I_curr, d_curr, K, transform, 1, damp)
         _, one_step_err = solve_GaussNewton(I_prev, d_prev, I_curr, d_curr, K, transform_pc, 1, damp)
-
+        print('error = {}, one step error = {}'.format(err, one_step_err))
         if one_step_err < err:
             damp = damp / 2
             transform = transform_pc
@@ -571,8 +642,6 @@ def direct_image_align(
     # if initial_transform is None:
     #     initial_transform = torch.eye(4, device=device)
     initial_transform = prev_rgbd.init_T.squeeze()
-    
-    # print('Initial T: \n', initial_transform)
 
     curr_pyramids = RGBDPyramid(rgbdimage=curr_rgbd,
                                 num_pyr_levels=num_pyr_levels)
@@ -584,26 +653,28 @@ def direct_image_align(
     prev_d_pyr = prev_pyramids.depth_pyramid
     K_pyr = curr_pyramids.K_pyramid
 
-    transform_prev = initial_transform # torch.eye(4, device=device)
+    transform_prev = initial_transform.clone() # torch.eye(4, device=device)
 
     for i in range(1, num_pyr_levels + 1):
     # for i in range(1, 2):
-        # print("=========== {}. Pyramid ===========".format(num_pyr_levels+1 - i))
+        print("=========== {}. Pyramid ===========".format(num_pyr_levels+1 - i))
         I_curr = curr_I_pyr[-i].squeeze(0)
         d_curr = curr_d_pyr[-i].squeeze(0)
         I_prev = prev_I_pyr[-i].squeeze(0)
         d_prev = prev_d_pyr[-i].squeeze(0)
         K = K_pyr[-i].squeeze()
         
-        transform, _ = solve_GaussNewton(I_prev=I_prev, d_prev=d_prev, I_curr=I_curr, d_curr=d_curr, K=K, T=transform_prev, num_iters=num_iters)
+        transform, _ = solve_GaussNewton(I_prev=I_prev, d_prev=d_prev, I_curr=I_curr, d_curr=d_curr, K=K, init_T=transform_prev, num_iters=num_iters)
         # transform, _ = solve_LevenbergMarquardt(I_prev=I_prev, d_prev=d_prev, I_curr=I_curr, d_curr=d_curr, K=K, T=transform_prev, num_iters=num_iters)
+        # transform, _ = solve_GradientDescent(I_prev=I_prev, d_prev=d_prev, I_curr=I_curr, d_curr=d_curr, K=K, T=transform_prev, num_iters=num_iters)
         transform_prev = transform
 
-        # print('==========================================')
-        # print("{}. pyramid level".format(num_pyr_levels+1 - i))
-        # print("Transformation = \n", transform)
-        # print('==========================================')
+        print('==========================================')
+        print("{}. pyramid level".format(num_pyr_levels+1 - i))
+        print("Transformation = \n", transform)
+        print('==========================================')
     
+    print('Compared to Initial T: \n', initial_transform)
     return transform
 
     
