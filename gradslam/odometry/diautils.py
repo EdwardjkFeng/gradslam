@@ -535,7 +535,7 @@ def solve_GaussNewton(
         pixel_warped = point_projection(cam_coord_warped, K)
 
         # Construct masks for valid entries
-        valid_depth_mask = (cam_coord[:, :, 2] > 0).squeeze() * (cam_coord_warped[:, :, 2] > 0).squeeze()
+        valid_depth_mask = (cam_coord[:, :, 2] > 0).squeeze() * (cam_coord_warped[:, :, 2] > 0).squeeze() * (d_prev > 0).squeeze()
 
         pixel_warped = pixel_warped.clamp(-2, 2)
         valid_warped_pixel = pixel_warped.squeeze() < 1
