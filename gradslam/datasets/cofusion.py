@@ -37,6 +37,7 @@ class Cofusion(data.Dataset):
         return_pose: bool = True,
         return_transform: bool = True,
         return_names: bool = True,
+        return_object_mask: bool = True,
     ):
         super(Cofusion, self).__init__()
 
@@ -53,6 +54,7 @@ class Cofusion(data.Dataset):
         self.return_pose = return_pose
         self.return_transform = return_transform
         self.return_names = return_names
+        self.return_object_mask = return_object_mask
 
         self.load_poses = self.return_pose or self.return_transform
 
@@ -296,8 +298,8 @@ class Cofusion(data.Dataset):
         color_seq, depth_seq, mask_seq, pose_seq, label_seq = [], [], [], [], []
         for i in range(self.seqlen):
             color = np.asarray(imageio.imread(color_seq_path[i]), dtype=float)
-            mask = np.asarray(imageio.imread(mask_seq_path[i]), dtype=np.int8)
-            color = self._filter_moving_objects(color, mask)
+            mask = np.asarray(imageio.imread(mask_seq_path[i]), dtype=np.uint8)
+            # color = self._filter_moving_objects(color, mask)
             color = self._preprocess_color(color)
             color = torch.from_numpy(color)
             color_seq.append(color)
@@ -310,6 +312,10 @@ class Cofusion(data.Dataset):
                 depth = self._preprocess_depth(depth)
                 depth = torch.from_numpy(depth)
                 depth_seq.append(depth)
+            
+            if self.return_object_mask:
+                mask = self._preprocess_color(mask)
+                mask_seq.append(torch.from_numpy(mask))
             
             # TODO: return mask
 
@@ -342,6 +348,10 @@ class Cofusion(data.Dataset):
 
         if self.return_names:
             output.append(framename)
+        
+        if self.return_object_mask:
+            mask_seq = torch.stack(mask_seq, 0).to(dtype=torch.uint8)
+            output.append(mask_seq)
 
         return tuple(output)
 
@@ -368,8 +378,14 @@ class Cofusion(data.Dataset):
             color = datautils.channels_first(color)
         return color
 
-    def dilate_mask(self, mask: np.ndarray):
+    def _dilate_mask(self, mask: np.ndarray):
         r"""Dilate the masked area of dynamic objects"""
+        kernel = np.ones((5, 5), np.uint8)
+        mask_dilation = cv2.dilate(mask, kernel, iterations=1)
+        return mask_dilation
+    
+    def _erode_mask(self, mask: np.ndarray):
+        r"""Erode the masked area of dynamic objects"""
         kernel = np.ones((5, 5), np.uint8)
         mask_dilation = cv2.dilate(mask, kernel, iterations=1)
         return mask_dilation
@@ -384,7 +400,8 @@ class Cofusion(data.Dataset):
         Returns:
             static_image (np.ndarray): RGB image with moving objects in black
         """
-        # mask = self.dilate_mask(mask)
+        mask = self._dilate_mask(mask)
+        mask = self._erode_mask(mask)
         mask_filter = np.sum(mask, axis=2) != 0
         if len(image.shape) == 3:
             image[mask_filter, :] = [0, 0, 0]
