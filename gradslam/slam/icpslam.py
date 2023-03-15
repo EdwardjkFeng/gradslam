@@ -10,7 +10,7 @@ from ..odometry.gradicp import GradICPOdometryProvider
 from ..odometry.coloricp import ColorICPOdometryProvider
 from ..odometry.deep3Dregistaion import Deep3DRegistrationProvider
 from ..odometry.dia import DIAOdometryProvider
-from ..odometry.dia_icp import DIA_ICPOdometryProvider
+# from ..odometry.dia_icp import DIA_ICPOdometryProvider
 
 from ..odometry.icputils import downsample_pointclouds, downsample_rgbdimages
 from ..structures.pointclouds import Pointclouds
@@ -104,8 +104,8 @@ class ICPSLAM(nn.Module):
             odomprov = Deep3DRegistrationProvider()
         elif odom == 'dia':
             odomprov = DIAOdometryProvider(num_pyr_levels=dsratio, numiters=numiters)
-        elif odom == 'dia_icp':
-            odomprov = DIA_ICPOdometryProvider(num_pyr_levels=dsratio, numiters=numiters, dist_thresh=dist_thresh)
+        # elif odom == 'dia_icp':
+        #     odomprov = DIA_ICPOdometryProvider(num_pyr_levels=dsratio, numiters=numiters, dist_thresh=dist_thresh)
 
         self.odom = odom
         self.odomprov = odomprov
@@ -274,18 +274,20 @@ class ICPSLAM(nn.Module):
             transform = self.odomprov.provide(prev_frame, live_frame)
 
             return compose_transformations(
+                # transform.squeeze(1), prev_frame.poses.squeeze(1)
                 prev_frame.poses.squeeze(1), transform.squeeze(1)
             ).unsqueeze(1), transform
-        elif self.odom in ["dia_icp"]:
-            live_frame.poses = prev_frame.poses
-            frames_pc = downsample_rgbdimages(live_frame, self.dsratio)
-            pc2im_bnhw = find_active_map_points(pointclouds, prev_frame)
-            maps_pc = downsample_pointclouds(pointclouds, pc2im_bnhw, self.dsratio)
-            transform = self.odomprov.provide(prev_frame, live_frame, maps_pc, frames_pc)
+        # elif self.odom in ["dia_icp"]:
+        #     live_frame.poses = prev_frame.poses
+        #     frames_pc = downsample_rgbdimages(live_frame, self.dsratio)
+        #     pc2im_bnhw = find_active_map_points(pointclouds, prev_frame)
+        #     maps_pc = downsample_pointclouds(pointclouds, pc2im_bnhw, self.dsratio)
+        #     transform = self.odomprov.provide(prev_frame, live_frame, maps_pc, frames_pc)
 
-            return compose_transformations(
-                transform.squeeze(1), prev_frame.poses.squeeze(1)
-            ).unsqueeze(1), transform
+        #     return compose_transformations(
+        #         prev_frame.poses.squeeze(1), transform.squeeze(1)
+        #         # transform.squeeze(1), prev_frame.poses.squeeze(1)
+        #     ).unsqueeze(1), transform
 
     def _map(
         self, pointclouds: Pointclouds, live_frame: RGBDImages, inplace: bool = False

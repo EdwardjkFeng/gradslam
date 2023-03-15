@@ -39,7 +39,7 @@ def se3_hat(xi: torch.Tensor) -> torch.Tensor:
 
     xi_hat = torch.zeros(4, 4).type(xi.dtype).to(xi.device)
     xi_hat[0:3, 0:3] = omega_hat
-    xi_hat[0:3, 3] = v
+    xi_hat[0:3, 3] = v.view(3)
 
     return xi_hat
 
@@ -113,3 +113,39 @@ def se3_exp(xi: torch.Tensor) -> torch.Tensor:
     last_row = torch.tensor([0, 0, 0, 1]).type(omega.dtype).to(omega.device)
 
     return torch.cat((torch.cat((R, t), dim=1), last_row.unsqueeze(0)), dim=0)
+
+
+def se3_log(T: torch.Tensor) -> torch.Tensor:
+    v = T[0:3, 3].view(3, 1)
+    R = T[0:3, 0:3]
+
+    c_theta = (torch.trace(R) - 1.0) / 2.0
+    theta = torch.arccos(c_theta)
+    s_theta = torch.sin(theta)
+    omega_hat = theta / (2 * s_theta + 1e-8) * (R - R.T)
+    omega = torch.tensor([omega_hat[2, 1], omega_hat[0, 2], omega_hat[1, 0]]).view(3, 1).to(T.device)
+
+    if omega.norm() < _eps:
+        V = torch.eye(3, 3).type(omega.dtype).to(omega.device) + omega_hat
+    else:
+        omega_hat_sq = omega_hat.mm(omega_hat)
+        # Coefficients of the Rodrigues formula
+        A = s_theta / theta
+        B = (1 - c_theta) / torch.pow(theta, 2)
+        C = (theta - s_theta) / torch.pow(theta, 3)
+        R = (
+            torch.eye(3, 3).type(omega.dtype).to(omega.device)
+            + A * omega_hat
+            + B * omega_hat_sq
+        )
+        V = (
+            torch.eye(3, 3).type(omega.dtype).to(omega.device)
+            + B * omega_hat
+            + C * omega_hat_sq
+        )
+
+    v_pi = torch.mm(torch.linalg.inv(V), v)
+
+    xi = torch.cat((v_pi, omega), dim=0).view(6, 1)
+
+    return xi
