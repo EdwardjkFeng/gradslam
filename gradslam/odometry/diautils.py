@@ -17,7 +17,7 @@ from torch.masked.maskedtensor import MaskedTensor
 
 # For debug purpose
 import open3d as o3d
-import sophus
+# import sophus
 import numpy as np
 
 __all__ = [
