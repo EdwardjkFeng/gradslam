@@ -63,6 +63,8 @@ class RGBDImages(object):
         "_global_vertex_map",
         "_global_normal_map",
         "_init_T",
+        "_object_mask",
+        "_object_label",
     ]
 
     def __init__(
@@ -75,6 +77,8 @@ class RGBDImages(object):
         device: Union[torch.device, str, None] = None,
         *,
         pixel_pos: Optional[torch.Tensor] = None,
+        object_mask: Optional[torch.Tensor] = None,
+        object_label: Optional[torch.Tensor] = None,
     ):
         super().__init__()
 
@@ -97,6 +101,10 @@ class RGBDImages(object):
         if not (pixel_pos is None or torch.is_tensor(pixel_pos)):
             msg = "Expected pixel_pos to be of type tensor or None; got {}"
             raise TypeError(msg.format(type(pixel_pos)))
+        if not torch.is_tensor(object_mask):
+            msg = "Expected object_mask to be of type tensor; got {}"
+        if not torch.is_tensor(object_mask):
+            msg = "Expected object_mask to be of type tensor; got {}"
 
         self._channels_first = channels_first
 
@@ -146,6 +154,10 @@ class RGBDImages(object):
         if pixel_pos is not None and (pixel_pos.shape != self._pixel_pos_shape):
             msg = "Expected pixel_pos to have shape {0}. Got {1} instead"
             raise ValueError(msg.format(self._pixel_pos_shape, pixel_pos.shape))
+        if object_mask is not None and object_mask.shape[self.cdim] != 3:
+            msg = "Expected object_mask to have 3 channels on dimension {0}. Got {1} instead"
+            raise ValueError(msg.format(self.cdim, object_mask.shape[self.cdim]))
+        # if object_label is not None and object_label
 
         # assert device type
         inputs = [rgb_image, depth_image, intrinsics, poses, pixel_pos]
@@ -164,6 +176,8 @@ class RGBDImages(object):
         self._poses = poses.to(self.device) if poses is not None else None
         self._pixel_pos = pixel_pos.to(self.device) if pixel_pos is not None else None
         self._init_T = None
+        self._object_mask = object_mask.to(self.device) if object_mask is not None else None
+        self._object_label = object_label.to(self.device) if object_label is not None else None
 
         self._vertex_map = None
         self._global_vertex_map = None
@@ -411,6 +425,14 @@ class RGBDImages(object):
         if self._init_T is None:
             self._init_T = torch.eye(4, device=self.device).expand(self._B, self._L, -1, -1)
         return self._init_T
+    
+    @property
+    def object_mask(self):
+        return self._object_mask
+    
+    @property
+    def object_label(self):
+        return self._object_label
 
     @rgb_image.setter
     def rgb_image(self, value):
@@ -489,6 +511,14 @@ class RGBDImages(object):
             - value: :math:`(B, L, 4, 4)`
         """
         self._init_T = value
+
+    @object_mask.setter
+    def object_mask(self, value):
+        self._object_mask = value
+    
+    @object_label.setter
+    def object_label(self, value):
+        self._object_label = value
 
     def detach(self):
         r"""Detachs RGBDImages object. All internal tensors are detached individually.

@@ -38,6 +38,7 @@ class Cofusion(data.Dataset):
         return_transform: bool = True,
         return_names: bool = True,
         return_object_mask: bool = True,
+        return_object_label: bool = True,
     ):
         super(Cofusion, self).__init__()
 
@@ -55,6 +56,7 @@ class Cofusion(data.Dataset):
         self.return_transform = return_transform
         self.return_names = return_names
         self.return_object_mask = return_object_mask
+        self.return_object_label = return_object_label
 
         self.load_poses = self.return_pose or self.return_transform
 
@@ -178,7 +180,7 @@ class Cofusion(data.Dataset):
 
         # Get a list of all color, depth, pose, label and intrinsics files.
         colorfiles, depthfiles, poses, framenames = [], [], [], []
-        maskfiles, intrinsicfiles = [], []
+        maskfiles, labelfiles, intrinsicfiles = [], [], []
         idx = np.arange(seqlen) * (dilation + 1)
         for file_num, posefile in enumerate(posesfiles): # Iterate over all sequences
             parentdir = os.path.dirname(posefile)[:-12]
@@ -189,7 +191,7 @@ class Cofusion(data.Dataset):
                     continue
 
             traj_colorfiles, traj_depthfiles = [], []
-            traj_maskfiles, traj_intrinsicfile = [], []
+            traj_maskfiles, traj_labelfiles, traj_intrinsicfile = [], [], []
             traj_poses, traj_framenames = [], []
             with open(posefile, "r") as f:
                 lines = f.readlines()
@@ -213,6 +215,8 @@ class Cofusion(data.Dataset):
                 traj_depthfiles.append(os.path.normpath(os.path.join(parentdir, "depth_noise/Depth{0:04d}.exr".format(int(line[0])))))
                 # Read mask image file paths (PNG)
                 traj_maskfiles.append(os.path.normpath(os.path.join(parentdir, "mask_colour/Mask{0:04d}.png".format(int(line[0])))))
+                # Read label file paths (PNG)
+                traj_labelfiles.append(os.path.normpath(os.path.join(parentdir, "mask_id/Mask{0:04d}.png".format(int(line[0])))))
 
                 if self.load_poses:
                     traj_poses.append(np.asarray(line[1:]))
@@ -228,6 +232,7 @@ class Cofusion(data.Dataset):
                 colorfiles.append([traj_colorfiles[i] for i in inds])
                 depthfiles.append([traj_depthfiles[i] for i in inds])
                 maskfiles.append([traj_maskfiles[i] for i in inds])
+                labelfiles.append([traj_labelfiles[i] for i in inds])
                 framenames.append(", ".join([traj_framenames[i] for i in inds]))
                 if self.load_poses:
                     poses.append([traj_poses[i] for i in inds])
@@ -242,6 +247,7 @@ class Cofusion(data.Dataset):
         self.colorfiles = colorfiles
         self.depthfiles = depthfiles
         self.maskfiles = maskfiles
+        self.labelfiles = labelfiles
         self.poses = poses
         self.framenames = framenames
 
@@ -292,6 +298,7 @@ class Cofusion(data.Dataset):
         color_seq_path = self.colorfiles[idx]
         depth_seq_path = self.depthfiles[idx]
         mask_seq_path = self.maskfiles[idx]
+        label_seq_path = self.labelfiles[idx]
         pose_pointquat_seq = self.poses[idx] if self.load_poses else None
         framename = self.framenames[idx]
 
@@ -299,6 +306,7 @@ class Cofusion(data.Dataset):
         for i in range(self.seqlen):
             color = np.asarray(imageio.imread(color_seq_path[i]), dtype=float)
             mask = np.asarray(imageio.imread(mask_seq_path[i]), dtype=np.uint8)
+            label = np.asarray(imageio.imread(label_seq_path[i]), dtype=np.uint8)
             # color = self._filter_moving_objects(color, mask)
             color = self._preprocess_color(color)
             color = torch.from_numpy(color)
@@ -317,7 +325,10 @@ class Cofusion(data.Dataset):
                 mask = self._preprocess_color(mask)
                 mask_seq.append(torch.from_numpy(mask))
             
-            # TODO: return mask
+            # TODO: return label
+            if self.return_object_label:
+                label = self._preprocess_color(label)
+                label_seq.append(torch.from_numpy(label))
 
         if self.load_poses:
             poses = self._homogenPoses(pose_pointquat_seq)
@@ -352,6 +363,10 @@ class Cofusion(data.Dataset):
         if self.return_object_mask:
             mask_seq = torch.stack(mask_seq, 0).to(dtype=torch.uint8)
             output.append(mask_seq)
+        
+        if self.return_object_label:
+            label_seq = torch.stack(label_seq, 0).to(dtype=torch.uint8)
+            output.append(label_seq)
 
         return tuple(output)
 
@@ -400,9 +415,9 @@ class Cofusion(data.Dataset):
         Returns:
             static_image (np.ndarray): RGB image with moving objects in black
         """
-        mask = self._dilate_mask(mask)
-        mask = self._erode_mask(mask)
-        mask_filter = np.sum(mask, axis=2) != 0
+        # mask = self._dilate_mask(mask)
+        # mask = self._erode_mask(mask)
+        mask_filter = np.sum(mask, axis=2) == 0
         if len(image.shape) == 3:
             image[mask_filter, :] = [0, 0, 0]
         else:
