@@ -657,7 +657,7 @@ def direct_image_align(
 
     for i in range(1, num_pyr_levels + 1):
     # for i in range(1, 2):
-        print("=========== {}. Pyramid ===========".format(num_pyr_levels+1 - i))
+        # print("=========== {}. Pyramid ===========".format(num_pyr_levels+1 - i))
         I_curr = curr_I_pyr[-i].squeeze(0)
         d_curr = curr_d_pyr[-i].squeeze(0)
         I_prev = prev_I_pyr[-i].squeeze(0)
@@ -669,12 +669,12 @@ def direct_image_align(
         # transform, _ = solve_GradientDescent(I_prev=I_prev, d_prev=d_prev, I_curr=I_curr, d_curr=d_curr, K=K, T=transform_prev, num_iters=num_iters)
         transform_prev = transform
 
-        print('==========================================')
-        print("{}. pyramid level".format(num_pyr_levels+1 - i))
-        print("Transformation = \n", transform)
-        print('==========================================')
+        # print('==========================================')
+        # print("{}. pyramid level".format(num_pyr_levels+1 - i))
+        # print("Transformation = \n", transform)
+        # print('==========================================')
     
-    print('Compared to Initial T: \n', initial_transform)
+    # print('Compared to Initial T: \n', initial_transform)
     return transform
 
     
