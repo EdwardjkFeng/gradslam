@@ -316,7 +316,7 @@ class Cofusion(data.Dataset):
                 depth = np.asarray(imageio.imread(depth_seq_path[i]), dtype=float)
                 if len(depth.shape) > 2:
                     depth = depth[:, :, 0]
-                depth = self._filter_moving_objects(depth, mask)
+                # depth = self._filter_moving_objects(depth, mask)
                 depth = self._preprocess_depth(depth)
                 depth = torch.from_numpy(depth)
                 depth_seq.append(depth)
@@ -395,14 +395,14 @@ class Cofusion(data.Dataset):
 
     def _dilate_mask(self, mask: np.ndarray):
         r"""Dilate the masked area of dynamic objects"""
-        kernel = np.ones((5, 5), np.uint8)
+        kernel = np.ones((2, 2), np.uint8)
         mask_dilation = cv2.dilate(mask, kernel, iterations=1)
         return mask_dilation
     
     def _erode_mask(self, mask: np.ndarray):
         r"""Erode the masked area of dynamic objects"""
-        kernel = np.ones((5, 5), np.uint8)
-        mask_dilation = cv2.dilate(mask, kernel, iterations=1)
+        kernel = np.ones((2, 2), np.uint8)
+        mask_dilation = cv2.erode(mask, kernel, iterations=1)
         return mask_dilation
 
     def _filter_moving_objects(self, image: np.ndarray, mask: np.ndarray):
