@@ -65,6 +65,8 @@ class RGBDImages(object):
         "_init_T",
         "_object_mask",
         "_object_label",
+        "_segmented_RGBDs",
+        "_all_poses",
     ]
 
     def __init__(
@@ -79,6 +81,8 @@ class RGBDImages(object):
         pixel_pos: Optional[torch.Tensor] = None,
         object_mask: Optional[torch.Tensor] = None,
         object_label: Optional[torch.Tensor] = None,
+        filter_objects: bool = False,
+        segment_objects: bool = False,
     ):
         super().__init__()
 
@@ -138,6 +142,8 @@ class RGBDImages(object):
             3,
         )
 
+        self._all_poses_shape = (*self._poses_shape[:2], 1, 4, 4)
+
         # input shape checks
         if rgb_image.shape[self.cdim] != 3:
             msg = "Expected rgb_image to have 3 channels on dimension {0}. Got {1} instead"
@@ -179,13 +185,19 @@ class RGBDImages(object):
         self._object_mask = object_mask.to(self.device) if object_mask is not None else None
         self._object_label = object_label.to(self.device) if object_label is not None else None
 
+        # if filter_objects:
+        #     self._rgb_image = self._filter_objects(self._rgb_image, self._object_mask)
+
         self._vertex_map = None
         self._global_vertex_map = None
         self._normal_map = None
         self._global_normal_map = None
         self._valid_depth_mask = None
+        self._segmented_RGBDs = None
+        self._all_poses = self._poses.clone().view(self._all_poses_shape) if poses is not None else None
 
         self._B, self._L = self._rgb_image.shape[:2]
+        self._O = self._all_poses_shape[2]
         self.h = (
             self._rgb_image.shape[3]
             if self._channels_first
@@ -321,6 +333,10 @@ class RGBDImages(object):
         return self._poses
 
     @property
+    def all_poses(self):
+        return self._all_poses
+    
+    @property
     def pixel_pos(self):
         r"""Gets the `pixel_pos`
 
@@ -434,6 +450,12 @@ class RGBDImages(object):
     def object_label(self):
         return self._object_label
 
+    @property
+    def segmented_RGBDs(self):
+        if self._segmented_RGBDs is None:
+            self._segment()
+        return self._segmented_RGBDs
+
     @rgb_image.setter
     def rgb_image(self, value):
         r"""Updates `rgb_image` of self.
@@ -499,6 +521,13 @@ class RGBDImages(object):
         self._poses = value
         self._global_vertex_map = None
         self._global_normal_map = None
+    
+    @all_poses.setter
+    def all_poses(self, value):
+        if value is not None:
+            self._assert_shape(value[:, :, 0, :, :], self._poses_shape)
+        self._all_poses = value
+        self._all_poses_shape = self._all_poses.shape
 
     @init_T.setter
     def init_T(self, value):
@@ -520,6 +549,10 @@ class RGBDImages(object):
     def object_label(self, value):
         self._object_label = value
 
+    @segmented_RGBDs.setter
+    def segmented_RGBDs(self, value):
+        self._segmented_RGBDs = value
+    
     def detach(self):
         r"""Detachs RGBDImages object. All internal tensors are detached individually.
 
@@ -823,6 +856,35 @@ class RGBDImages(object):
                 "bsjc,bshwc->bshwj", rmat, local_normal_map
             )
 
+    def _segment(self):
+        # Which objects are observed in the current image
+        # Among them, 0 denotes the background
+        ids = torch.unique(self._object_label)
+        self._O = int(torch.max(ids)) + 1
+        segments = []
+        for id in ids:
+            filter_mask = (self._object_label != id).squeeze(-1)
+            rgb = self._rgb_image.clone()
+            rgb[filter_mask, :] = 0
+            depth = self._depth_image.clone()
+            depth[filter_mask, :] = 0
+            segments.append(RGBDImages(
+                rgb_image=rgb,
+                depth_image=depth,
+                intrinsics=self.intrinsics,
+                poses=self.poses,
+                channels_first=self.channels_first,
+            ))
+        
+        self._segmented_RGBDs = {
+            "ids": ids, 
+            "rgbds": segments
+        }
+        self._all_poses_shape = (*self._all_poses_shape[:2], self._O, 4, 4)
+        prev_O = self._all_poses.shape[2]
+        if prev_O != self._O:
+            self._all_poses = torch.cat((self._all_poses, self._all_poses[:, :, 0:1, :, :].expand(-1, -1, self._O-prev_O, -1, -1)), dim=2)
+        
     def plotly(
         self,
         index: int,
