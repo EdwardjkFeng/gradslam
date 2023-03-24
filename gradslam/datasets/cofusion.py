@@ -306,7 +306,7 @@ class Cofusion(data.Dataset):
         for i in range(self.seqlen):
             color = np.asarray(imageio.imread(color_seq_path[i]), dtype=float)
             mask = np.asarray(imageio.imread(mask_seq_path[i]), dtype=np.uint8)
-            label = np.asarray(imageio.imread(label_seq_path[i]), dtype=np.uint8)
+            label = np.asarray(imageio.imread(label_seq_path[i]), dtype=np.uint8)[:, :, 0]
             # color = self._filter_moving_objects(color, mask)
             color = self._preprocess_color(color)
             color = torch.from_numpy(color)
@@ -322,12 +322,13 @@ class Cofusion(data.Dataset):
                 depth_seq.append(depth)
             
             if self.return_object_mask:
-                mask = self._preprocess_color(mask)
+                mask = self._preprocess_mask(mask)
                 mask_seq.append(torch.from_numpy(mask))
             
             # TODO: return label
             if self.return_object_label:
-                label = self._preprocess_color(label)
+                label = self._preprocess_mask(label)
+                label = np.expand_dims(label, -1)
                 label_seq.append(torch.from_numpy(label))
 
         if self.load_poses:
@@ -392,6 +393,27 @@ class Cofusion(data.Dataset):
         if self.channels_first:
             color = datautils.channels_first(color)
         return color
+    
+    def _preprocess_mask(self, mask:np.ndarray):
+        """Preprocesses the segmentation mask (or label) by resizing to :math:`(H, W, C)`, (optionally) normalizing values to
+        :math:`[0, 1]`, and (optionally) using channels first :math:`(C, H, W)` representation.
+
+        Args:
+            mask (np.ndarray): Raw input segmentation mask or instance labels
+
+        Retruns:
+            np.ndarray: Preprocessed mask or instance labels
+
+        Shape:
+            - Input: :math:`(H_\text{old}, W_\text{old}, C)`
+            - Output: :math:`(H, W, C)` if `self.channels_first == False`, else :math:`(C, H, W)`.
+        """
+        mask = cv2.resize(
+            mask, (self.width, self.height), interpolation=cv2.INTER_NEAREST
+        )
+        if self.channels_first:
+            mask = datautils.channels_first(mask)
+        return mask
 
     def _dilate_mask(self, mask: np.ndarray):
         r"""Dilate the masked area of dynamic objects"""
