@@ -306,7 +306,7 @@ class Cofusion(data.Dataset):
         for i in range(self.seqlen):
             color = np.asarray(imageio.imread(color_seq_path[i]), dtype=float)
             mask = np.asarray(imageio.imread(mask_seq_path[i]), dtype=np.uint8)
-            label = np.asarray(imageio.imread(label_seq_path[i]), dtype=np.uint8)[:, :, 0]
+            label = np.asarray(imageio.imread(label_seq_path[i]), dtype=np.uint8)
             # color = self._filter_moving_objects(color, mask)
             color = self._preprocess_color(color)
             color = torch.from_numpy(color)
@@ -327,6 +327,8 @@ class Cofusion(data.Dataset):
             
             # TODO: return label
             if self.return_object_label:
+                if label.ndim == 3:
+                    label = label[:, :, 0]
                 label = self._preprocess_mask(label)
                 label = np.expand_dims(label, -1)
                 label_seq.append(torch.from_numpy(label))
