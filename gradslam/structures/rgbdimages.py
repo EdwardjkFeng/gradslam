@@ -185,8 +185,8 @@ class RGBDImages(object):
         self._object_mask = object_mask.to(self.device) if object_mask is not None else None
         self._object_label = object_label.to(self.device) if object_label is not None else None
 
-        # if filter_objects:
-        #     self._rgb_image = self._filter_objects(self._rgb_image, self._object_mask)
+        if filter_objects:
+            self._depth_image = self._filter_moving_objects(self._depth_image, self._object_mask)
 
         self._vertex_map = None
         self._global_vertex_map = None
@@ -885,6 +885,24 @@ class RGBDImages(object):
         if prev_O != self._O:
             self._all_poses = torch.cat((self._all_poses, self._all_poses[:, :, 0:1, :, :].expand(-1, -1, self._O-prev_O, -1, -1)), dim=2)
         
+    def _filter_moving_objects(self, image, mask):
+        r"""Filter moving objects from RGB image with mask.
+
+        Args:
+            image (np.ndarray): Raw RGB image or Raw depth image
+            mask (np.ndarray): Mask for moving objects #TODO: generate mask for dynamic objects
+        
+        Returns:
+            static_image (np.ndarray): RGB image with moving objects in black
+        """
+        # mask = self._dilate_mask(mask)
+        # mask = self._erode_mask(mask)
+        mask_filter = torch.sum(mask, axis=self.cdim) != 0
+
+        image[mask_filter, :] = 0
+
+        return image
+
     def plotly(
         self,
         index: int,
