@@ -675,6 +675,9 @@ def direct_image_align(
         # print('==========================================')
     
     # print('Compared to Initial T: \n', initial_transform)
+    # TODO: Need to reconsider
+    if torch.isnan(transform).any():
+        transform = initial_transform
     return transform
 
     
