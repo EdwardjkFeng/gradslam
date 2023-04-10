@@ -4,7 +4,7 @@ from typing import Union, Optional, List
 
 import torch
 import torch.nn as nn
-from kornia.geometry.linalg import compose_transformations
+from kornia.geometry.linalg import compose_transformations, inverse_transformation
 
 from ..odometry.dia import DIAOdometryProvider
 
@@ -162,14 +162,19 @@ class VisualOdometryFrontend(nn.Module):
                 live_frame.segmented_RGBDs["rgbds"][i].poses = live_frame.segmented_RGBDs["rgbds"][0].poses
             else:
                 live_frame.segmented_RGBDs["rgbds"][i].poses = prev_segmented_RGBDs[idx].poses
-                transform = self.odomprov.provide(
-                    prev_segmented_RGBDs[idx], 
-                    live_frame.segmented_RGBDs["rgbds"][i]
-                )
+                if id == 0:
+                    transform = self.odomprov.provide(
+                        live_frame.segmented_RGBDs["rgbds"][i], prev_segmented_RGBDs[idx]
+                        )
+                else:
+                    transform = self.odomprov.provide(
+                        live_frame,
+                        prev_segmented_RGBDs[idx],
+                    )
                 all_poses[:, :, id] = transform
                 live_frame.segmented_RGBDs["rgbds"][i].poses = compose_transformations(
                     prev_segmented_RGBDs[idx].poses.squeeze(1), 
-                    transform.squeeze(1)
+                    inverse_transformation(transform.squeeze(1))
                 ).unsqueeze(1)
                 live_frame.segmented_RGBDs["rgbds"][i].init_T = transform
 
