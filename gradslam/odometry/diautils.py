@@ -641,7 +641,8 @@ def direct_image_align(
 
     # if initial_transform is None:
     #     initial_transform = torch.eye(4, device=device)
-    initial_transform = prev_rgbd.init_T.squeeze()
+    # TODO: Need a better solution for parsing the estimate form last iteration
+    initial_transform = curr_rgbd.init_T.squeeze()
 
     curr_pyramids = RGBDPyramid(rgbdimage=curr_rgbd,
                                 num_pyr_levels=num_pyr_levels)
