@@ -604,7 +604,7 @@ def create_meshgrid(
         xs = torch.linspace(0, height - 1, height)
         ys = torch.linspace(0, width - 1, width)
     # Generate grid (2 x H x W)
-    base_grid: torch.Tensor = torch.stack((torch.meshgrid([xs, ys])))
+    base_grid: torch.Tensor = torch.stack((torch.meshgrid([xs, ys], indexing='ij')))
     return base_grid.permute(1, 2, 0).unsqueeze(0)  # 1 xH x W x 2
 
 
