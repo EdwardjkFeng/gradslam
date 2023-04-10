@@ -173,7 +173,10 @@ class VisualOdometryFrontend(nn.Module):
                     prev_segmented_RGBDs[idx].poses.squeeze(1), 
                     inverse_transformation(transform.squeeze(1))
                 ).unsqueeze(1)
-                all_poses[:, :, id] = transform
+                all_poses[:, :, id] = compose_transformations(
+                    prev_segmented_RGBDs[idx].poses.squeeze(1), 
+                    inverse_transformation(transform.squeeze(1))
+                ).unsqueeze(1)
                 live_frame.segmented_RGBDs["rgbds"][i].init_T = transform
             else: # Initialize new instance
                 # Initialize new instance and take current frame as trajectory origin and as reference for following estimation
