@@ -7,6 +7,8 @@ from .structutils import numpy_to_plotly_image
 from ..geometry.geometryutils import create_meshgrid
 from ..geometry.projutils import inverse_intrinsics
 
+from kornia.morphology import dilation, erosion, opening, closing
+
 __all__ = ["RGBDImages"]
 
 
@@ -185,9 +187,6 @@ class RGBDImages(object):
         self._object_mask = object_mask.to(self.device) if object_mask is not None else None
         self._object_label = object_label.to(self.device) if object_label is not None else None
 
-        if filter_objects:
-            self._depth_image = self._filter_moving_objects(self._depth_image, self._object_mask)
-
         self._vertex_map = None
         self._global_vertex_map = None
         self._normal_map = None
@@ -209,6 +208,9 @@ class RGBDImages(object):
             else self._rgb_image.shape[3]
         )
         self.shape = (self._B, self._L, self.h, self.w)
+
+        if filter_objects:
+            self._depth_image = self._filter_moving_objects(self._depth_image, self._object_label)
 
     def __getitem__(self, index):
         r"""
@@ -481,7 +483,7 @@ class RGBDImages(object):
             - value: :math:`(B, L, H, W, 1)` if self.channels_first is False, else :math:`(B, L, 1, H, W)`
         """
         if value is not None:
-            self._assert_shape(value, self._depth_image_shape)
+            self._assert_shape(value, self._depth_shape)
         self._depth_image = value
         self._vertex_map = None
         self._normal_map = None
@@ -679,10 +681,12 @@ class RGBDImages(object):
         self._global_vertex_map = permute(self._global_vertex_map, ordering)
         self._normal_map = permute(self._normal_map, ordering)
         self._global_normal_map = permute(self._global_normal_map, ordering)
+        self._object_label = permute(self._object_label, ordering)
+        self._object_mask = permute(self._object_mask, ordering)
 
         self._channels_first = False
         self._rgb_image_shape = tuple(self._rgb_image.shape)
-        self._depth_image_shape = tuple(self._depth_image.shape)
+        self._depth_shape = tuple(self._depth_image.shape)
         return self
 
     def to_channels_first_(self):
@@ -701,10 +705,12 @@ class RGBDImages(object):
         self._global_vertex_map = permute(self._global_vertex_map, ordering)
         self._normal_map = permute(self._normal_map, ordering)
         self._global_normal_map = permute(self._global_normal_map, ordering)
+        self._object_label = permute(self._object_label, ordering)
+        self._object_mask = permute(self._object_mask, ordering)
 
         self._channels_first = True
         self._rgb_image_shape = tuple(self._rgb_image.shape)
-        self._depth_image_shape = tuple(self._depth_image.shape)
+        self._depth_shape = tuple(self._depth_image.shape)
         return self
 
     @staticmethod
@@ -863,11 +869,13 @@ class RGBDImages(object):
         self._O = int(torch.max(ids)) + 1
         segments = []
         for id in ids:
-            filter_mask = (self._object_label != id).squeeze(-1)
+            # filter_mask = \
+            #     self._erosion((self._object_label == id), 1).squeeze(-1).bool()
+            filter_mask = (self._object_label == id).squeeze(-1)
             rgb = self._rgb_image.clone()
-            rgb[filter_mask, :] = 0
+            rgb[~filter_mask, :] = 0
             depth = self._depth_image.clone()
-            depth[filter_mask, :] = 0
+            depth[~filter_mask, :] = 0
             segments.append(RGBDImages(
                 rgb_image=rgb,
                 depth_image=depth,
@@ -884,24 +892,75 @@ class RGBDImages(object):
         prev_O = self._all_poses.shape[2]
         if prev_O != self._O:
             self._all_poses = torch.cat((self._all_poses, self._all_poses[:, :, 0:1, :, :].expand(-1, -1, self._O-prev_O, -1, -1)), dim=2)
+
+    def _dilation(self, image: torch.Tensor, kernel_size: int = 2):
+        r"""Apply the dilation function from Kornia and return the dilated image applying the same kernel in each channel.
+
+        Args: 
+            image (torch.Tensor): image with shape (B, L, H, W, C)
+            kernel_size: Size of the square matrix (kernel) with which the image is convolved
+
+        Returns: 
+            opened_image(torch.Tensor): opened image with shape (B, L, H, W, C)
+        """
+        kernel = torch.ones((kernel_size, kernel_size)).to(self.device)
+        # The kornia library uses a convention of image with shape (B, C, H, W).
+        # Therefore, we need to make the input channel first and recover it 
+        # afterthat.
+        permute = RGBDImages._permute_if_not_None
+        B, L = self.shape[:2]
+        opened_image = permute(image, ordering=(0, 1, 4, 2, 3)).view(B*L, image.shape[-1], self.h, self.w)
+        opened_image = dilation(opened_image.float(), kernel)
+
+        # Recover its shape 
+        opened_image = permute(opened_image.view(B, L, image.shape[-1], self.h, self.w), ordering=(0, 1, 3, 4, 2))
+
+        return opened_image
+    
+    def _erosion(self, image: torch.Tensor, kernel_size: int = 2):
+        r"""Apply the erosion function from Kornia and return the eroded image applying the same kernel in each channel.
+
+        Args: 
+            image (torch.Tensor): image with shape (B, L, H, W, C)
+            kernel_size: Size of the square matrix (kernel) with which the image is convolved
+
+        Returns: 
+            opened_image(torch.Tensor): opened image with shape (B, L, H, W, C)
+        """
+        kernel = torch.ones((kernel_size, kernel_size)).to(self.device)
+        # The kornia library uses a convention of image with shape (B, C, H, W).
+        # Therefore, we need to make the input channel first and recover it 
+        # afterthat.
+        permute = RGBDImages._permute_if_not_None
+        B, L = self.shape[:2]
+        opened_image = permute(image, ordering=(0, 1, 4, 2, 3)).view(B*L, image.shape[-1], self.h, self.w)
+        opened_image = erosion(opened_image.float(), kernel)
+
+        # Recover its shape 
+        opened_image = permute(opened_image.view(B, L, image.shape[-1], self.h, self.w), ordering=(0, 1, 3, 4, 2))
+
+        return opened_image
         
     def _filter_moving_objects(self, image, mask):
         r"""Filter moving objects from RGB image with mask.
 
         Args:
-            image (np.ndarray): Raw RGB image or Raw depth image
-            mask (np.ndarray): Mask for moving objects #TODO: generate mask for dynamic objects
+            image (torch.Tensor): Raw RGB image or Raw depth image
+            mask (torch.Tensor): Mask for moving objects #TODO: generate mask for dynamic objects
         
         Returns:
             static_image (np.ndarray): RGB image with moving objects in black
         """
-        # mask = self._dilate_mask(mask)
-        # mask = self._erode_mask(mask)
-        mask_filter = torch.sum(mask, axis=self.cdim) != 0
+        mask = self._dilation(mask, 2)
+        mask_filter = torch.sum(mask, axis=self.cdim) == 0
 
-        image[mask_filter, :] = 0
+        image[~mask_filter, :] = 0
 
         return image
+    
+    def filter_moving_objects(self):
+        self.depth_image = self._filter_moving_objects(self.depth_image, self.object_label)
+        return self
 
     def plotly(
         self,
