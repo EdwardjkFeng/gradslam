@@ -467,6 +467,7 @@ class Cofusion(data.Dataset):
             (self.width, self.height),
             interpolation=cv2.INTER_NEAREST
         )
+        depth[depth>100*self.scaling_factor] = 0.0
         depth = np.expand_dims(depth, -1)
         if self.channels_first:
             depth = datautils.channels_first(depth)
