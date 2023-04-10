@@ -29,7 +29,6 @@ def load_data(
     match data_set:
         case 'CoFusion':
             cofusion_path = data_path + 'CoFusion/'
-
             sequences = ("room4-full",) # 850 frames
 
             # Load data
@@ -88,12 +87,13 @@ def initialize_visualizer():
 
 if __name__ == "__main__":
     NUM_FRAMES = 50
-    START_FRAME = 500
+    DILATION = 1
+    START_FRAME = 550
     NUM_ITERATION = 30
     NUM_PYRAMID = 3
     ODOM = "dia"
 
-    input_frames, intrinsics = load_data(n_frames=NUM_FRAMES, start=START_FRAME, load_masks=True)
+    input_frames, intrinsics = load_data(n_frames=NUM_FRAMES, dilation =DILATION, start=START_FRAME, load_masks=True)
     # TODO implement a different visualizer
     # input_frames.plotly(0).show()
 
@@ -139,12 +139,15 @@ if __name__ == "__main__":
 
             pcds_list, live_frame.poses, live_frame.all_poses, live_frame.init_T = slam.step(pcds_list, live_frame, prev_frame, inplace=False)
 
+            pose = live_frame.poses.cpu().detach().squeeze().numpy()
+
             for id in live_frame.segmented_RGBDs["ids"]:
-                intermediate_pcd = pcds_list[id].open3d(0, max_num_points=100*10000)
+                intermediate_pcd = pcds_list[id].open3d(0, max_num_points=100000)
+                if id != 0: # TODO: need a double check
+                    intermediate_pcd.transform(np.linalg.inv(pose))
                 intermediate_pcd.transform(R_y_180)
                 vis.add_geometry(intermediate_pcd)
 
-            pose = live_frame.poses.cpu().detach().squeeze().numpy()
             camera_pose = copy.deepcopy(world_frame).transform(pose).transform(R_y_180)
 
             fustum = copy.deepcopy(fustum_int).transform(pose).transform(R_y_180)
