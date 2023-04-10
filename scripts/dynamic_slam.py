@@ -140,13 +140,15 @@ if __name__ == "__main__":
             pcds_list, live_frame.poses, live_frame.all_poses, live_frame.init_T = slam.step(pcds_list, live_frame, prev_frame, inplace=False)
 
             pose = live_frame.poses.cpu().detach().squeeze().numpy()
+            obj_poses = live_frame.all_poses.cpu().detach().squeeze().numpy()
 
             for id in live_frame.segmented_RGBDs["ids"]:
-                intermediate_pcd = pcds_list[id].open3d(0, max_num_points=100000)
-                if id != 0: # TODO: need a double check
-                    intermediate_pcd.transform(np.linalg.inv(pose))
-                intermediate_pcd.transform(R_y_180)
-                vis.add_geometry(intermediate_pcd)
+                if pcds_list[id].has_points:
+                    intermediate_pcd = pcds_list[id].open3d(0, max_num_points=100000)
+                    # if id != 0: # TODO: need a double check
+                    #     intermediate_pcd.transform(np.linalg.inv(np.matmul(obj_transform, obj_poses[id])))
+                    intermediate_pcd.transform(R_y_180)
+                    vis.add_geometry(intermediate_pcd)
 
             camera_pose = copy.deepcopy(world_frame).transform(pose).transform(R_y_180)
 
