@@ -156,11 +156,8 @@ class VisualOdometryFrontend(nn.Module):
         for i in range(len(live_segments_ids)):
             id = live_segments_ids[i]
             idx = (prev_segments_ids == id).nonzero(as_tuple=True)[0]
-            if idx.nelement() == 0: # Initialize new instance
-                # Initialize new instance and take current frame as trajectory origin and as reference for following estimation
-                all_poses[:, :, id] = torch.eye(4, device=self.device)
-                live_frame.segmented_RGBDs["rgbds"][i].poses = live_frame.segmented_RGBDs["rgbds"][0].poses
-            else:
+            
+            if idx.nelement() != 0:
                 live_frame.segmented_RGBDs["rgbds"][i].poses = prev_segmented_RGBDs[idx].poses
                 if id == 0:
                     transform = self.odomprov.provide(
@@ -171,14 +168,19 @@ class VisualOdometryFrontend(nn.Module):
                         live_frame,
                         prev_segmented_RGBDs[idx],
                     )
-                all_poses[:, :, id] = transform
+
                 live_frame.segmented_RGBDs["rgbds"][i].poses = compose_transformations(
                     prev_segmented_RGBDs[idx].poses.squeeze(1), 
                     inverse_transformation(transform.squeeze(1))
                 ).unsqueeze(1)
+                all_poses[:, :, id] = transform
                 live_frame.segmented_RGBDs["rgbds"][i].init_T = transform
+            else: # Initialize new instance
+                # Initialize new instance and take current frame as trajectory origin and as reference for following estimation
+                all_poses[:, :, id] = torch.eye(4, device=self.device)
+                live_frame.segmented_RGBDs["rgbds"][i].poses = live_frame.segmented_RGBDs["rgbds"][0].poses
 
-        return live_frame.segmented_RGBDs["rgbds"][0].poses, all_poses, all_poses[:, :, 0]
+        return live_frame.segmented_RGBDs["rgbds"][0].poses, all_poses, live_frame.segmented_RGBDs["rgbds"][0].init_T
     
         # TODO structure to store cameara poses and objects poses
 
@@ -193,7 +195,17 @@ class VisualOdometryFrontend(nn.Module):
             pointclouds_list.append(Pointclouds(device=self.device))
         for id in live_frame.segmented_RGBDs["ids"]:
             idx = (live_frame.segmented_RGBDs["ids"] == id).nonzero(as_tuple=True)[0]
-            pointclouds_list[id] = update_map_fusion(
-                pointclouds_list[id], live_frame.segmented_RGBDs["rgbds"][idx], self.dist_th, self.dot_th, self.sigma, inplace
-            )
+            if self.has_enough_valid_pixels(live_frame.segmented_RGBDs["rgbds"][idx]):
+                pointclouds_list[id] = update_map_fusion(
+                    pointclouds_list[id], live_frame.segmented_RGBDs["rgbds"][idx], self.dist_th, self.dot_th, self.sigma, inplace
+                )
         return pointclouds_list
+    
+
+    def initialize_object_traj():
+        pass
+
+    def has_enough_valid_pixels(self, rgbdimages: RGBDImages, th: int=30):
+        r"""Check if the input rgbd frame contains an sufficient amount of valid pixels. If the number of valid depth value is below a threshold, return false. Otherwise, return true."""
+        valid_depth = torch.sum(rgbdimages.depth_image > 0)
+        return valid_depth > th
