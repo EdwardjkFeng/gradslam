@@ -86,8 +86,8 @@ def initialize_visualizer():
 
 
 if __name__ == "__main__":
-    NUM_FRAMES = 50
-    DILATION = 1
+    NUM_FRAMES = 100
+    DILATION = 0
     START_FRAME = 550
     NUM_ITERATION = 30
     NUM_PYRAMID = 3
@@ -143,10 +143,11 @@ if __name__ == "__main__":
             obj_poses = live_frame.all_poses.cpu().detach().squeeze().numpy()
 
             for id in live_frame.segmented_RGBDs["ids"]:
+                id = int(id)
                 if pcds_list[id].has_points:
                     intermediate_pcd = pcds_list[id].open3d(0, max_num_points=100000)
-                    # if id != 0: # TODO: need a double check
-                    #     intermediate_pcd.transform(np.linalg.inv(np.matmul(obj_transform, obj_poses[id])))
+                    if id != 0: # TODO: need a double check
+                        intermediate_pcd.transform(np.linalg.inv(np.matmul(obj_poses[id], np.linalg.inv(pose))))
                     intermediate_pcd.transform(R_y_180)
                     vis.add_geometry(intermediate_pcd)
 
