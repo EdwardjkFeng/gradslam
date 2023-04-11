@@ -535,13 +535,19 @@ def solve_GaussNewton(
         pixel_warped = point_projection(cam_coord_warped, K)
 
         # Construct masks for valid entries
-        valid_depth_mask = (cam_coord[:, :, 2] > 0).squeeze() * (cam_coord_warped[:, :, 2] > 0).squeeze() * (d_prev > 0).squeeze()
+        valid_depth_mask = torch.logical_and(
+                                    (cam_coord[:, :, 2] > 0).squeeze(), 
+                                    (cam_coord_warped[:, :, 2] > 0).squeeze())
+        valid_depth_mask = torch.logical_and(
+                                    valid_depth_mask, 
+                                    (d_prev > 0).squeeze())
 
         pixel_warped = pixel_warped.clamp(-2, 2)
-        valid_warped_pixel = pixel_warped.squeeze() < 1
-        valid_warped_pixel = valid_warped_pixel * (pixel_warped.squeeze() > -1)
-        valid_warped_pixel = valid_warped_pixel[:, :, 0] * valid_warped_pixel[:, :, 1]
-        # print(valid_warped_pixel.shape, torch.sum(valid_warped_pixel))
+        valid_warped_pixel = torch.logical_and(
+                                    pixel_warped.squeeze() <  1,  
+                                    pixel_warped.squeeze() > -1)
+        valid_warped_pixel = torch.logical_and(
+                                    valid_warped_pixel[:, :, 0], valid_warped_pixel[:, :, 1])
         
         # Calculate residuals
         # r = calc_residuals(pixel_warped, I_prev, I_curr)
@@ -677,8 +683,8 @@ def direct_image_align(
     
     # print('Compared to Initial T: \n', initial_transform)
     # TODO: Need to reconsider
-    if torch.isnan(transform).any():
-        transform = initial_transform
+    # if torch.isnan(transform).any():
+    #     transform = initial_transform
     return transform
 
     
