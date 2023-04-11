@@ -901,7 +901,7 @@ class RGBDImages(object):
             kernel_size: Size of the square matrix (kernel) with which the image is convolved
 
         Returns: 
-            opened_image(torch.Tensor): opened image with shape (B, L, H, W, C)
+            dilated_image(torch.Tensor): opened image with shape (B, L, H, W, C)
         """
         kernel = torch.ones((kernel_size, kernel_size)).to(self.device)
         # The kornia library uses a convention of image with shape (B, C, H, W).
@@ -909,13 +909,13 @@ class RGBDImages(object):
         # afterthat.
         permute = RGBDImages._permute_if_not_None
         B, L = self.shape[:2]
-        opened_image = permute(image, ordering=(0, 1, 4, 2, 3)).view(B*L, image.shape[-1], self.h, self.w)
-        opened_image = dilation(opened_image.float(), kernel)
+        dilated_image = permute(image, ordering=(0, 1, 4, 2, 3)).view(B*L, image.shape[-1], self.h, self.w)
+        dilated_image = dilation(dilated_image.float(), kernel)
 
         # Recover its shape 
-        opened_image = permute(opened_image.view(B, L, image.shape[-1], self.h, self.w), ordering=(0, 1, 3, 4, 2))
+        dilated_image = permute(dilated_image.view(B, L, image.shape[-1], self.h, self.w), ordering=(0, 1, 3, 4, 2))
 
-        return opened_image
+        return dilated_image.to(image.dtype)
     
     def _erosion(self, image: torch.Tensor, kernel_size: int = 2):
         r"""Apply the erosion function from Kornia and return the eroded image applying the same kernel in each channel.
@@ -925,7 +925,7 @@ class RGBDImages(object):
             kernel_size: Size of the square matrix (kernel) with which the image is convolved
 
         Returns: 
-            opened_image(torch.Tensor): opened image with shape (B, L, H, W, C)
+            eroded_image(torch.Tensor): opened image with shape (B, L, H, W, C)
         """
         kernel = torch.ones((kernel_size, kernel_size)).to(self.device)
         # The kornia library uses a convention of image with shape (B, C, H, W).
@@ -933,13 +933,13 @@ class RGBDImages(object):
         # afterthat.
         permute = RGBDImages._permute_if_not_None
         B, L = self.shape[:2]
-        opened_image = permute(image, ordering=(0, 1, 4, 2, 3)).view(B*L, image.shape[-1], self.h, self.w)
-        opened_image = erosion(opened_image.float(), kernel)
+        eroded_image = permute(image, ordering=(0, 1, 4, 2, 3)).view(B*L, image.shape[-1], self.h, self.w)
+        eroded_image = erosion(eroded_image.float(), kernel)
 
         # Recover its shape 
-        opened_image = permute(opened_image.view(B, L, image.shape[-1], self.h, self.w), ordering=(0, 1, 3, 4, 2))
+        eroded_image = permute(eroded_image.view(B, L, image.shape[-1], self.h, self.w), ordering=(0, 1, 3, 4, 2))
 
-        return opened_image
+        return eroded_image.to(image.dtype)
         
     def _filter_moving_objects(self, image, mask):
         r"""Filter moving objects from RGB image with mask.
@@ -951,8 +951,9 @@ class RGBDImages(object):
         Returns:
             static_image (np.ndarray): RGB image with moving objects in black
         """
-        mask = self._dilation(mask, 2)
-        mask_filter = torch.sum(mask, axis=self.cdim) == 0
+        # mask = self._dilation(mask, 2)
+        # mask_filter = torch.sum(mask, axis=self.cdim) == 0
+        mask_filter = (mask == 1).squeeze(-1)
 
         image[~mask_filter, :] = 0
 
