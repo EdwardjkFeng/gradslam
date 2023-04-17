@@ -83,12 +83,18 @@ def initialize_visualizer():
     vis.create_window(height=1000, width=1000)
     return vis
 
+def inv_transform(T: np.array):
+    T_inv = np.eye(4)
+    T_inv[0:3, 0:3] = T[0:3, 0:3].transpose()
+    T_inv[0:3, 3] = - np.matmul(T[0:3, 0:3].transpose(), T[0:3, 3])
+
+    return T_inv
 
 
 if __name__ == "__main__":
     NUM_FRAMES = 100
     DILATION = 0
-    START_FRAME = 550
+    START_FRAME = 600
     NUM_ITERATION = 30
     NUM_PYRAMID = 3
     ODOM = "dia"
@@ -142,12 +148,14 @@ if __name__ == "__main__":
             pose = live_frame.poses.cpu().detach().squeeze().numpy()
             obj_poses = live_frame.all_poses.cpu().detach().squeeze().numpy()
 
+            print(START_FRAME)
+            START_FRAME += DILATION + 1
             for id in live_frame.segmented_RGBDs["ids"]:
                 id = int(id)
                 if pcds_list[id].has_points:
                     intermediate_pcd = pcds_list[id].open3d(0, max_num_points=100000)
                     if id != 0: # TODO: need a double check
-                        intermediate_pcd.transform(np.linalg.inv(np.matmul(obj_poses[id], np.linalg.inv(pose))))
+                        intermediate_pcd.transform(np.matmul(pose, inv_transform(obj_poses[id])))
                     intermediate_pcd.transform(R_y_180)
                     vis.add_geometry(intermediate_pcd)
 
