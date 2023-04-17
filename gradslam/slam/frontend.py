@@ -164,10 +164,11 @@ class VisualOdometryFrontend(nn.Module):
                         live_frame.segmented_RGBDs["rgbds"][i], prev_segmented_RGBDs[idx]
                         )
                 else:
-                    transform = self.odomprov.provide(
-                        live_frame,
-                        prev_segmented_RGBDs[idx],
-                    )
+                    if self.has_enough_valid_pixels(live_frame.segmented_RGBDs["rgbds"][i]):   
+                        transform = self.odomprov.provide(
+                            live_frame,
+                            prev_segmented_RGBDs[idx],
+                        )
 
                 live_frame.segmented_RGBDs["rgbds"][i].poses = compose_transformations(
                     prev_segmented_RGBDs[idx].poses.squeeze(1), 
@@ -208,7 +209,7 @@ class VisualOdometryFrontend(nn.Module):
     def initialize_object_traj():
         pass
 
-    def has_enough_valid_pixels(self, rgbdimages: RGBDImages, th: int=30):
+    def has_enough_valid_pixels(self, rgbdimages: RGBDImages, th: int=1000):
         r"""Check if the input rgbd frame contains an sufficient amount of valid pixels. If the number of valid depth value is below a threshold, return false. Otherwise, return true."""
         valid_depth = torch.sum(rgbdimages.depth_image > 0)
         return valid_depth > th

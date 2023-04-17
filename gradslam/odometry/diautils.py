@@ -674,7 +674,7 @@ def direct_image_align(
         transform, _ = solve_GaussNewton(I_prev=I_prev, d_prev=d_prev, I_curr=I_curr, d_curr=d_curr, K=K, init_T=transform_prev, num_iters=num_iters)
         # transform, _ = solve_LevenbergMarquardt(I_prev=I_prev, d_prev=d_prev, I_curr=I_curr, d_curr=d_curr, K=K, T=transform_prev, num_iters=num_iters)
         # transform, _ = solve_GradientDescent(I_prev=I_prev, d_prev=d_prev, I_curr=I_curr, d_curr=d_curr, K=K, T=transform_prev, num_iters=num_iters)
-        transform_prev = transform if not torch.isnan(transform).any() else initial_transform
+        transform_prev = transform #if not torch.isnan(transform).any() else initial_transform
 
         # print('==========================================')
         # print("{}. pyramid level".format(num_pyr_levels+1 - i))
