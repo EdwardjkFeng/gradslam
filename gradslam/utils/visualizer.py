@@ -5,7 +5,9 @@ import time
 import argparse
 import open3d as o3d
 
-class dyngrad_visualization():
+__all__ = ["Visualizer"]
+
+class Visualizer():
     """Dynamic gradSLAM visualization frontend"""
     def __init__(self, video, device="cuda:0"):
         torch.cuda.set_device(device)
