@@ -2,6 +2,7 @@ import gradslam as gs
 from gradslam import Pointclouds, RGBDImages
 from gradslam.datasets import Cofusion, ICL, TUM
 from gradslam.slam import VisualOdometryFrontend
+from gradslam.utils import Visualizer
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -14,6 +15,7 @@ import open3d as o3d
 import copy
 import time
 import gc
+import argparse
 
 
 def load_data(
@@ -90,23 +92,35 @@ def inv_transform(T: np.array):
 
     return T_inv
 
+def o3d_animation_callback(vis: o3d.visualization.Visualizer):
+    cam = vis.get_view_control().convert_to_pinhole_camera_parameters()
+
+    vis.poll_event()
+    vis.update_renderer()
+
 
 if __name__ == "__main__":
-    NUM_FRAMES = 100
-    DILATION = 0
-    START_FRAME = 600
-    NUM_ITERATION = 30
-    NUM_PYRAMID = 3
-    ODOM = "dia"
+    # TODO add argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset", default="CoFusion", type=str, help="dataset to run SLAM on") # TODO enable choosing sequences
+    parser.add_argument("--nframes", default=100, type=int, help="number of frames to process")
+    parser.add_argument("--dilation", default=3 , type=int, help="number of frames to skip between two consecutive frames")
+    parser.add_argument("--t0", default=0, type=int, help="starting frame")
+    parser.add_argument("--nitr", default=30, type=int, help="number of iterations for optimization")
+    parser.add_argument("--ds", default=3, type=int, help="downsampling ratio (ICP)/ number of pyramid levels (DIA)")
+    parser.add_argument("--odom", default="dia", type=str, help="odometry provider")
 
-    input_frames, intrinsics = load_data(n_frames=NUM_FRAMES, dilation =DILATION, start=START_FRAME, load_masks=True)
+    args = parser.parse_args()
+
+
+    input_frames, intrinsics = load_data(n_frames=args.nframes, data_set=args.dataset, dilation =args.dilation, start=args.t0, load_masks=True)
     # TODO implement a different visualizer
     # input_frames.plotly(0).show()
 
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     print("Using device: ", device)
 
-    slam = VisualOdometryFrontend(odom=ODOM, numiters=NUM_ITERATION, dsratio=NUM_PYRAMID, device=device)
+    slam = VisualOdometryFrontend(odom=args.odom, numiters=args.nitr, dsratio=args.ds, device=device)
     pcds = Pointclouds(device=device)
     pcds_list = [pcds]
     batch_size, seq_len = input_frames.shape[:2]
@@ -134,10 +148,12 @@ if __name__ == "__main__":
     while keep_running:
         if s < seq_len:
             vis.remove_geometry(intermediate_pcd)
-            # if camera_pose is not None:
-            #     vis.remove_geometry(camera_pose)
-            # if fustum is not None:
-            #     vis.remove_geometry(fustum) 
+            if camera_pose is not None:
+                vis.remove_geometry(camera_pose)
+                del camera_pose
+            if fustum is not None:
+                vis.remove_geometry(fustum) 
+                del fustum
             
             live_frame = input_frames[:, s].to(device)
             if s == 0 and live_frame.poses is None:
@@ -148,12 +164,12 @@ if __name__ == "__main__":
             pose = live_frame.poses.cpu().detach().squeeze().numpy()
             obj_poses = live_frame.all_poses.cpu().detach().squeeze().numpy()
 
-            print(START_FRAME)
-            START_FRAME += DILATION + 1
+            # print(START_FRAME)
+            args.t0 += args.dilation + 1
             for id in live_frame.segmented_RGBDs["ids"]:
                 id = int(id)
                 if pcds_list[id].has_points:
-                    intermediate_pcd = pcds_list[id].open3d(0, max_num_points=100000)
+                    intermediate_pcd = pcds_list[id].open3d(0, max_num_points=max(args.nframes, 100) * 10000)
                     if id != 0: # TODO: need a double check
                         intermediate_pcd.transform(np.matmul(pose, inv_transform(obj_poses[id])))
                     intermediate_pcd.transform(R_y_180)
@@ -167,7 +183,7 @@ if __name__ == "__main__":
 
             poses.append(pose)
 
-            prev_frame = live_frame if ODOM != "gt" else None
+            prev_frame = live_frame if args.odom != "gt" else None
 
         s += 1
         keep_running = vis.poll_events()
