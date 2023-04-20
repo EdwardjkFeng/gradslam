@@ -139,7 +139,12 @@ if __name__ == "__main__":
     world_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.05) #.transform(R_z_180)
     INTRINSIC = intrinsics.squeeze().numpy()[:3, :3]
     INT_POSE = np.eye(4)
+    c_red = np.zeros((8, 3))
+    c_red[:, 0] = 1
+    c_blue = np.zeros((8, 3))
+    c_blue[:, -1] = 1
     fustum_int = o3d.geometry.LineSet.create_camera_visualization(320, 240, INTRINSIC, INT_POSE, 0.07)
+    fustum_int.colors = o3d.utility.Vector3dVector(c_red)
     camera_pose = None
     fustum = None
 
@@ -149,12 +154,13 @@ if __name__ == "__main__":
         cam = vis.get_view_control().convert_to_pinhole_camera_parameters()
         if s < seq_len:
             vis.remove_geometry(intermediate_pcd)
+            del intermediate_pcd
             if camera_pose is not None:
                 vis.remove_geometry(camera_pose)
                 del camera_pose
             if fustum is not None:
-                vis.remove_geometry(fustum) 
-                del fustum
+                fustum.colors = o3d.utility.Vector3dVector(c_blue)
+                vis.update_geometry(fustum)
             
             live_frame = input_frames[:, s].to(device)
             if s == 0 and live_frame.poses is None:
@@ -170,7 +176,7 @@ if __name__ == "__main__":
             for id in live_frame.segmented_RGBDs["ids"]:
                 id = int(id)
                 if pcds_list[id].has_points:
-                    intermediate_pcd = pcds_list[id].open3d(0, max_num_points=max(args.nframes, 100) * 10000)
+                    intermediate_pcd = pcds_list[id].open3d(0, max_num_points=max(args.nframes, 100) * 5000)
                     if id != 0: # TODO: need a double check
                         intermediate_pcd.transform(np.matmul(pose, inv_transform(obj_poses[id])))
                     intermediate_pcd.transform(R_y_180)
