@@ -146,6 +146,7 @@ if __name__ == "__main__":
     s = 0
     keep_running = True
     while keep_running:
+        cam = vis.get_view_control().convert_to_pinhole_camera_parameters()
         if s < seq_len:
             vis.remove_geometry(intermediate_pcd)
             if camera_pose is not None:
@@ -186,7 +187,8 @@ if __name__ == "__main__":
             prev_frame = live_frame if args.odom != "gt" else None
 
         s += 1
+        cam = vis.get_view_control().convert_from_pinhole_camera_parameters(cam)
         keep_running = vis.poll_events()
         vis.update_renderer()
 
-vis.destroy_window()
+    vis.destroy_window()
