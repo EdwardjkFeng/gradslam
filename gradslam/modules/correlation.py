@@ -6,6 +6,10 @@ class CorrLayer:
         self.num_levels = num_levels
         self.corr_pyramid = []
         self.corr = CorrLayer.correlation(fmap1, fmap2)
+        self.corr_np = CorrLayer.correlation_np(
+            fmap1.cpu().detach().numpy(),
+            fmap2.cpu().detach().numpy()
+        )
 
 
     def forward():
@@ -17,65 +21,54 @@ class CorrLayer:
     @staticmethod
     def correlation(fmap1, fmap2):
         B, C, H, W = fmap1.shape
-        fmap1 = fmap1.view(B, C, H*W)
-        fmap1 = torch.flatten(fmap1, start_dim=2)
-        fmap2 = fmap2.view(B, C, H*W)
-        fmap1 = torch.flatten(fmap2, start_dim=2)
+        # fmap1 = torch.flatten(fmap1, start_dim=2)
+        fmap1 = fmap1.reshape(C, H*W)
+        fmap1_norm = torch.linalg.vector_norm(fmap1, dim=0, keepdim=True)
+        print(fmap1_norm)
 
-        corr = torch.matmul(fmap1.transpose(1, 2), fmap2)**2 / torch.matmul(fmap1.transpose(1, 2), fmap1) / torch.matmul(fmap2.transpose(1, 2), fmap2)
-        print(corr.shape)
+        fmap2 = fmap2.reshape(C, H*W)
+        fmap2_norm = torch.linalg.vector_norm(fmap2, dim=0, keepdim=True)
+        print(fmap1_norm.shape)
+        denominator = torch.matmul(fmap1_norm.T, fmap2_norm)
+        print(denominator)
+        corr = torch.matmul(fmap1.transpose(0, 1), fmap2) / (denominator + 1e-10)
         
         return corr.view(B, H, W, H, W)
 
+    def correlation_np(fmap1, fmap2):
+        f1 = fmap1.reshape(3, -1)
+        f2 = fmap2.reshape(3, -1)
+        f1_norm = np.linalg.norm(f1, axis=0)
+        f2_norm = np.linalg.norm(f2, axis=0)
+        denominator = np.matmul(f1_norm.reshape(-1, 1),  f2_norm.reshape(1, -1))
+        print(f1_norm)
+        print(denominator)
+        corr = np.matmul(f1.T, f2) / (denominator + 1e-10)
+
+        return corr
+
 
 if __name__ == "__main__":
-    from gradslam.datasets import Cofusion
-    from gradslam import RGBDImages
-
-    import torch
-    from torch.utils.data import DataLoader
-    import matplotlib.pyplot as plt
     import numpy as np
     import cv2 as cv
+    import matplotlib.pyplot as plt
+    import 
 
-    data_set = 'CoFusion'
-    data_path = '/home/jingkun/Dataset/'
-    cofusion_path = data_path + 'CoFusion/'
-
-    sequences = ("room4-full",)
-    # Load data
-    dataset = Cofusion(basedir=cofusion_path, sequences=sequences, seqlen=2, dilation=10, start=540, height=60, width=80, channels_first=False, return_object_mask=False)
-    loader = DataLoader(dataset=dataset, batch_size=1)
-    colors, depths, *_ = next(iter(loader))
     device = torch.device("cuda")
-    colors = colors.permute(0, 1, 4, 2, 3).to(device).squeeze(0)
-    depths = depths.permute(0, 1, 4, 2, 3).to(device).squeeze(0)
-    print(f"colors shape: {colors.shape}")  # torch.Size([2, 8, 240, 320, 3])
-    print(f"depths shape: {depths.shape}")  # torch.Size([2, 8, 240, 320, 1])
-    fmap = torch.cat([colors, depths], dim=1)
-    print(f"feature map shape: {fmap.shape}")
+    fin = np.random.rand(1, 3, 2, 3)
+    fmap1 = torch.from_numpy(fin).to(device)
+    fmap2 = torch.from_numpy(fin).to(device)
 
-    corr = CorrLayer(fmap[0:1, ...], fmap[1:2, ...]).corr.view(60*80, 60*80)
-    corresp = torch.argmin(corr, dim=0).view(60, 80)
-    y, x = torch.meshgrid(
-        torch.arange(60).to(device).float(),
-        torch.arange(80).to(device).float(),
-        indexing="ij")
-    pix = torch.stack([x, y], dim=-1)
-    pix[:, :, 0] = (corresp / 80).int()
-    pix[:, :, 1] = corresp % 80
-    corr_pix = pix.cpu().detach().numpy().astype(int)
-    print(corr_pix)
-    
-    img = colors[1].permute(1, 2, 0).cpu().detach().numpy()
+    H, W = fin.shape[-2:]
+    corrlayer = CorrLayer(fmap1, fmap1)
+    corr = corrlayer.corr
+    corr = corr.view(H*W, H*W)
 
-    mimg = np.zeros_like(img)
-    for i in range(60):
-        for j in range(80):
-            mimg[i, j, :] = img[corr_pix[i, j, 0], corr_pix[i, j, 1], :]
-    
-    mimg = colors[0].permute(1, 2, 0).cpu().detach().numpy()
-    color = cv.normalize(mimg, None, norm_type=cv.NORM_MINMAX)
+    out = corr.cpu().detach().numpy()
     fig = plt.figure()
-    plt.imshow(color)
+    plt.imshow(out)
+    plt.show()
+
+    corr_np = corrlayer.corr_np
+    plt.imshow(corr_np)
     plt.show()
