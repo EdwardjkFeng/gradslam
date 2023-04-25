@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 
 class CorrLayer:
@@ -114,6 +115,73 @@ class CorrLayer:
     #     return corr
 
 
+class CorrBase(nn.Module):
+    def __init__(self, pad_size=4, kernel_size=1, max_displacement=4, stride1=1, stride2=1):
+        if not kernel_size == 1:
+            raise ValueError("kernel_size other than 1 is not implmented. Got {}".format(kernel_size))
+        if not pad_size == max_displacement:
+            raise ValueError("pad_size {} should be the same as max_displacement {}.".format(pad_size, max_displacement))
+        if stride1 != 1 or stride2 != 1:
+            raise ValueError("stide other than 1 is not implmented. Got stride1 = {} and stride2 {}".format(stride1, stride2))
+        
+        super().__init__()
+        self.max_disp = max_displacement
+        self.padlayer = nn.ConstantPad2d(pad_size, 0)
+        self.device = torch.device("cuda")
+
+    def forward(self, fr, fq):
+        """Apply the local correlaiton on two feature maps
+
+        Args:
+            fr (torch.Tensor): reference feature map
+            fq (torch.Tensor): query feature map
+        
+        Return:
+            torch.Tensor: correlaiton volume encoding that how similar a patch in reference map to its neighborhood in query fmap is.
+
+        Shape:
+            - fr: :math:`(B, C, H, W)`
+            - fq: :math:`(B, C, H, W)`
+            - output: :math:`(B, (2r^2 + 1), H, W)`
+        """
+        fq_pad = self.padlayer(fq)
+        fr = F.normalize(fr)
+        fq_pad = F.normalize(fq_pad)
+        offset_y, offset_x = torch.meshgrid([torch.arange(0, 2*self.max_disp + 1),
+                                             torch.arange(0, 2*self.max_disp + 1)],
+                                             indexing='ij')
+        
+        H, W = fr.shape[-2:]
+        output = torch.cat([
+            torch.mean(fr * fq_pad[:, :, dy:H+dy, dx:W+dx], 1, keepdim=True)
+            for dx, dy in zip(offset_x.reshape(-1), offset_y.reshape(-1))
+            ], dim=1)
+        return output
+
+    def lookup(self, corr_volume):
+        offset_y, offset_x = torch.meshgrid([torch.arange(0, 2*self.max_disp + 1),
+                                             torch.arange(0, 2*self.max_disp + 1)],
+                                             indexing='ij')
+        H, W = corr_volume.shape[-2:]
+        B = corr_volume.shape[0]
+        
+        print(corr_volume.shape)
+        corr_max, corr_index = torch.max(corr_volume, dim=1, keepdim=True)
+        print(corr_index.view(H, W))
+        v, u = torch.meshgrid([torch.arange(H), torch.arange(W)], indexing='ij')
+        output = torch.stack([v, u], dim=-1).to(self.device)
+        output = output.view(1, H, W, 2).expand(B, -1, -1, -1)
+        corr_index = corr_index.permute(0, 2, 3, 1)
+        cell_size = 2 * self.max_disp + 1
+        output[..., 0] += (corr_index // cell_size).squeeze(-1) - self.max_disp
+        output[..., 1] += (corr_index % cell_size).squeeze(-1) - self.max_disp
+        output[..., 0] = torch.where(output[..., 0] < 0, 0, output[..., 0])
+        output[..., 0] = torch.where(output[..., 0] >= H, H-1, output[..., 0])
+        output[..., 1] = torch.where(output[..., 1] < 0, 0, output[..., 1])
+        output[..., 1] = torch.where(output[..., 1] >= W, W-1, output[..., 1])
+        return output
+
+
 if __name__ == "__main__":
     import numpy as np
     import cv2 as cv
@@ -127,7 +195,7 @@ if __name__ == "__main__":
     data_path = '/home/jingkun/Dataset/'
     cofusion_path = data_path + data_set + '/'
     sequences = ("room4-full",)
-    dataset = Cofusion(basedir=cofusion_path, sequences=sequences, seqlen=2, dilation=0, start=0, height=60, width=80, channels_first=True, return_object_mask=False)
+    dataset = Cofusion(basedir=cofusion_path, sequences=sequences, seqlen=2, dilation=5, start=520, height=240, width=320, channels_first=True, return_object_mask=False)
     loader = DataLoader(dataset=dataset, batch_size=1)
     colors, depths, *_ = next(iter(loader))
 
@@ -142,41 +210,56 @@ if __name__ == "__main__":
     fmap2 = colors[1].unsqueeze(0)
 
     H, W = fmap1.shape[-2:]
-    corrlayer = CorrLayer(fmap1, fmap1)
-    corr = corrlayer.corr
-    corr = corr.view(H*W, H*W)
+    # corrlayer = CorrLayer(fmap1, fmap1)
+    corrlayer = CorrBase(pad_size=2, kernel_size=1, max_displacement=2)
+    # corr = corrlayer.corr
+    # corr = corr.view(H*W, H*W)
+    corr = corrlayer(fmap1, fmap2)
+    corr_cost, index = torch.max(corr, dim=1, keepdim=True)
+    corr_cost = corr_cost.squeeze()
+
 
     # lookup
-    tri = torch.triu(corr, diagonal=0)
-    y, x = torch.meshgrid(
-        torch.arange(H).to(device),
-        torch.arange(W).to(device),
-        indexing="ij"
-    )
-    pix = torch.stack([x, y], dim=-1).view(-1, 2)
-    match_idx = torch.argmax(tri, dim=1)
-    pix[:, 0] = (match_idx / W).int()
-    pix[:, 1] = match_idx % W
+    # tri = torch.triu(corr, diagonal=0)
+    # y, x = torch.meshgrid(
+    #     torch.arange(H).to(device),
+    #     torch.arange(W).to(device),
+    #     indexing="ij"
+    # )
+    # pix = torch.stack([x, y], dim=-1).view(-1, 2)
+    # match_idx = torch.argmax(tri, dim=1)
+    # pix[:, 0] = (match_idx / W).int()
+    # pix[:, 1] = match_idx % W
 
-    pix = corrlayer.matches[0]
+    # pix = corrlayer.matches[0]
+    pix = corrlayer.lookup(corr).squeeze()
 
-    # pix = pix.view(-1, 2)
-    warped = torch.zeros((H, W, 3))
-    # warped = torch.index_select(torch.index_select(colors[0], 1, pix[:, 0]), 2, pix[:, 1])
-    # print(warped.shape)
+    # # pix = pix.view(-1, 2)
+    # warped = torch.zeros((H, W, 3))
+    # # warped = torch.index_select(torch.index_select(colors[0], 1, pix[:, 0]), 2, pix[:, 1])
+    # # print(warped.shape)
+    # for i in range(H):
+    #     for j in range(W):
+    #         u = pix[i, j, 0] if torch.abs(pix[i, j, 0] - i) < 10 else 0
+    #         v = pix[i, j, 1] if torch.abs(pix[i, j, 1] - j) < 10 else 0
+    #         warped[i, j, :] = colors[1, :, int(u), int(v)]
+    warped = torch.zeros((H, W, 3)).to(device)
     for i in range(H):
         for j in range(W):
-            u = pix[i, j, 0] if torch.abs(pix[i, j, 0] - i) < 10 else 0
-            v = pix[i, j, 1] if torch.abs(pix[i, j, 1] - j) < 10 else 0
-            warped[i, j, :] = colors[1, :, int(u), int(v)]
+            v = pix[i, j, 0]
+            u = pix[i, j, 1]
+            warped[i, j, :] = colors[0, :, int(v), int(u)]
 
     fig = plt.figure()
-    img1 = cv.normalize(colors[0].permute(1, 2, 0).cpu().detach().numpy(), None, 0, 1, cv.NORM_MINMAX)
+    img1 = cv.normalize(colors[0].permute(1, 2, 0).cpu().detach().numpy(), None, 0, 1.0, cv.NORM_MINMAX)
     plt.imshow(img1)
     plt.show()
-    img2 = cv.normalize(colors[1].permute(1, 2, 0).cpu().detach().numpy(), None, 0, 1, cv.NORM_MINMAX)
-    plt.imshow(img2)
+    img2 = cv.normalize(colors[1].permute(1, 2, 0).cpu().detach().numpy(), None, 0, 1.0, cv.NORM_MINMAX)
+    plt.imshow(img2.astype(float))
     plt.show()
-    img = cv.normalize(warped.cpu().detach().numpy(), None, 0, 1, cv.NORM_MINMAX)
+    img = cv.normalize(corr_cost.cpu().detach().numpy(), None, 0, 1.0, cv.NORM_MINMAX)
+    plt.imshow(img)
+    plt.show()
+    img = cv.normalize(warped.cpu().detach().numpy(), None, 0, 1.0, cv.NORM_MINMAX)
     plt.imshow(img)
     plt.show()
