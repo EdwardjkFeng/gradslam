@@ -330,7 +330,6 @@ class Cofusion(data.Dataset):
                 if label.ndim == 3:
                     label = label[:, :, 0]
                 label = self._preprocess_mask(label)
-                label = np.expand_dims(label, -1)
                 label_seq.append(torch.from_numpy(label))
 
         if self.load_poses:
@@ -413,6 +412,8 @@ class Cofusion(data.Dataset):
         mask = cv2.resize(
             mask, (self.width, self.height), interpolation=cv2.INTER_NEAREST
         )
+        if mask.ndim < 3:
+            mask = np.expand_dims(mask, -1)
         if self.channels_first:
             mask = datautils.channels_first(mask)
         return mask
