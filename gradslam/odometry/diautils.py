@@ -12,6 +12,8 @@ from ..structures.pointclouds import Pointclouds
 from ..structures.rgbdimages import RGBDImages
 from .icputils import solve_linear_system
 
+from ..modules import LocalCorrLayer
+
 # The MaskedTensor module is still under development at the moment of this implementation, there will be changed in the future.
 from torch.masked.maskedtensor import MaskedTensor
 

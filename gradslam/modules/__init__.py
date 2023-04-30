@@ -1,1 +1,1 @@
-from correlation import *
+from .correlation import *
